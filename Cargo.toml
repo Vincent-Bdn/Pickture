@@ -1,0 +1,79 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/kernel",
+    "crates/ui_kit",
+    "crates/slice_browse",
+    "crates/slice_view",
+    "crates/slice_enhance",
+    "crates/slice_select",
+    "crates/app",
+]
+
+[workspace.package]
+version = "0.2.0"
+edition = "2021"
+rust-version = "1.82"
+license = "PolyForm-Noncommercial-1.0.0"
+repository = "https://github.com/Vincent-Bdn/pickture"
+
+[workspace.dependencies]
+# --- GUI -------------------------------------------------------------------
+eframe = { version = "0.32", default-features = false, features = [
+    "default_fonts",
+    "glow",
+    "wayland",
+    "x11",
+] }
+egui = "0.32"
+
+# --- imaging ---------------------------------------------------------------
+image = { version = "0.25", default-features = false, features = [
+    "jpeg",
+    "png",
+    "bmp",
+    "gif",
+    "tiff",
+    "webp",
+] }
+kamadak-exif = "0.6"
+rayon = "1.10"
+# SIMD resampling. `image`'s resizer costs ~210 ms downscaling a 24 MP frame to
+# 2048 px, which dominated preview decoding; this replaces it.
+fast_image_resize = "5"
+# Used directly for one thing the `image` facade no longer exposes: decoding a
+# JPEG at a 1/8, 1/4 or 1/2 DCT scale. `image` 0.25.10 moved to zune-jpeg as its
+# backend, which has no scaled-decode API, and that scaling is the whole basis
+# of the thumbnail budget.
+jpeg-decoder = "0.3"
+
+# --- platform / io ---------------------------------------------------------
+rfd = "0.15"
+directories = "5"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+anyhow = "1"
+# Embeds the icon into pickture.exe so Explorer shows it, not just the taskbar.
+winresource = "0.1"
+
+# --- internal --------------------------------------------------------------
+pickture-kernel = { path = "crates/kernel" }
+pickture-ui-kit = { path = "crates/ui_kit" }
+pickture-slice-browse = { path = "crates/slice_browse" }
+pickture-slice-view = { path = "crates/slice_view" }
+pickture-slice-enhance = { path = "crates/slice_enhance" }
+pickture-slice-select = { path = "crates/slice_select" }
+
+# Debug builds still decode images at a usable speed. Without this the `image`
+# crate's DCT and resampling loops run unoptimised, which is a 10-50x penalty
+# and is what made the first Rust draft feel unusable.
+[profile.dev]
+opt-level = 1
+
+[profile.dev.package."*"]
+opt-level = 3
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
+panic = "abort"

@@ -1,0 +1,25 @@
+[package]
+name = "pickture"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "pickture"
+path = "src/main.rs"
+
+[build-dependencies]
+winresource.workspace = true
+
+[dependencies]
+eframe.workspace = true
+egui.workspace = true
+rfd.workspace = true
+anyhow.workspace = true
+image.workspace = true
+pickture-kernel.workspace = true
+pickture-ui-kit.workspace = true
+pickture-slice-browse.workspace = true
+pickture-slice-view.workspace = true
+pickture-slice-enhance.workspace = true
+pickture-slice-select.workspace = true

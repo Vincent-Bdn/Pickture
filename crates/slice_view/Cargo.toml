@@ -1,0 +1,13 @@
+[package]
+name = "pickture-slice-view"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+egui.workspace = true
+pickture-kernel.workspace = true
+pickture-ui-kit.workspace = true
+
+[dev-dependencies]
+image.workspace = true

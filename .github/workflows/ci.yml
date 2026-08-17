@@ -1,0 +1,294 @@
+name: CI
+
+# Releasing is a button on the Actions tab, not a tag pushed from a laptop. Choose the bump, and the
+# workflow works out the number, tags it, builds and publishes the release.
+#
+# Cutting a version from a machine means the tag exists before anything has been proved, and the one
+# that decides the version is whoever remembers the last one. Here the tag is created by the run
+# itself, after the tests are green and the binary has built, so a tag that exists is a tag that
+# built.
+#
+# Not on every push to main either: main is where the day's work lands, and a green tick on a commit
+# nobody is shipping says nothing that building locally has not already said.
+on:
+  workflow_dispatch:
+    inputs:
+      bump:
+        description: 'Version to publish'
+        required: true
+        default: 'beta'
+        type: choice
+        options:
+          - beta
+          - patch
+          - minor
+          - major
+      version:
+        description: 'Exact number, without the v (leave empty to compute it)'
+        required: false
+        type: string
+  pull_request:
+
+# Two releases at once would race for the next number and produce two tags claiming the same one. A
+# second run waits rather than being cancelled: half a release is worse than a late one.
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+env:
+  CARGO_TERM_COLOR: always
+
+permissions:
+  contents: read
+
+jobs:
+  # Windows only, which is what the site promises. Nothing in the code is platform-specific, but
+  # Windows is the only target actually tested, and claiming more than that on a download page is how
+  # you collect bug reports for a platform you have never run.
+  test:
+    name: Test
+    runs-on: windows-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Formatting
+        run: cargo fmt --all --check
+
+      # --all-targets so the tests are linted too; they are where the sloppiness usually hides.
+      - name: Clippy
+        run: cargo clippy --workspace --all-targets -- -D warnings
+
+      # The 24 MP timing benchmark is #[ignore]d and stays that way here: wall-clock assertions on a
+      # shared runner measure the runner, not the code.
+      - name: Unit tests
+        run: cargo test --workspace
+
+      # The release profile is not the one the tests ran under: it turns on thin LTO and
+      # panic = "abort". Building it here means a profile-only breakage is caught by a pull request
+      # rather than by the release everyone is waiting on.
+      - name: Build release binary
+        run: cargo build --release --workspace
+
+  # Works out the next number and stops there. The tag is created at the very end, by the release
+  # job, once the binary has actually built.
+  #
+  # Skipped on a pull request, which takes the release job with it: it needs this one.
+  version:
+    name: Version
+    runs-on: ubuntu-latest
+    needs: test
+    if: github.event_name == 'workflow_dispatch'
+    outputs:
+      tag: ${{ steps.next.outputs.tag }}
+      number: ${{ steps.next.outputs.number }}
+      prerelease: ${{ steps.next.outputs.prerelease }}
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # The whole history, because the previous tag is the only thing that says what comes next.
+          fetch-depth: 0
+
+      - id: next
+        shell: bash
+        run: |
+          # Without this, git sorts v1.0.0-beta.1 after v1.0.0, and a beta would look newer than the
+          # release it precedes. Semantic versioning says the opposite.
+          git config versionsort.suffix -
+
+          git fetch --tags --force
+          latest=$(git tag -l 'v*' --sort=-v:refname | head -n 1)
+          [ -z "$latest" ] && latest="v0.0.0"
+
+          base=${latest#v}
+          beta=""
+
+          case "$base" in
+            *-beta.*)
+              beta=${base#*-beta.}
+              base=${base%%-*}
+              ;;
+          esac
+
+          IFS='.' read -r major minor patch <<< "$base"
+
+          case "${{ inputs.bump }}" in
+            major) major=$((major + 1)); minor=0; patch=0; beta="" ;;
+            minor) minor=$((minor + 1)); patch=0; beta="" ;;
+            # From a beta, patch is what releases it: v1.0.0-beta.3 becomes v1.0.0, not v1.0.1. The
+            # betas were leading somewhere, and it is that. Same rule npm version follows.
+            patch)
+              [ -z "$beta" ] && patch=$((patch + 1))
+              beta=""
+              ;;
+            beta)
+              # Another beta on the same number, or the first one on the next patch.
+              if [ -n "$beta" ]; then
+                beta=$((beta + 1))
+              else
+                patch=$((patch + 1))
+                beta=1
+              fi
+              ;;
+          esac
+
+          number="$major.$minor.$patch"
+          [ -n "$beta" ] && number="$number-beta.$beta"
+
+          # An imposed number wins. There is no bump that reaches v1.0.0-beta.1 from nothing, and
+          # this is also the way out of a numbering mistake without hand-tagging.
+          if [ -n "${{ inputs.version }}" ]; then
+            number="${{ inputs.version }}"
+            beta=""
+            case "$number" in *-*) beta="imposed" ;; esac
+          fi
+
+          echo "tag=v$number" >> "$GITHUB_OUTPUT"
+          echo "number=$number" >> "$GITHUB_OUTPUT"
+          echo "prerelease=$([ -n "$beta" ] && echo true || echo false)" >> "$GITHUB_OUTPUT"
+          echo "$latest -> v$number"
+
+  # Rebuilds with the number stamped in, then tags and publishes. The rebuild is not waste: the test
+  # job built whatever Cargo.toml happened to say, and what ships has to report the version it was
+  # released as.
+  release:
+    name: Release ${{ needs.version.outputs.tag }}
+    runs-on: windows-latest
+    needs: [test, version]
+    permissions:
+      contents: write
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+
+      # The number lives in the tag, not in the repository, so Cargo.toml is stamped for the build
+      # and the change is never committed. Without this the binary would report the last number
+      # anyone happened to write down, which is exactly the drift a computed version avoids.
+      - name: Stamp the version
+        shell: pwsh
+        run: |
+          $number = "${{ needs.version.outputs.number }}"
+          $path = "Cargo.toml"
+          $stamped = $false
+          $lines = Get-Content $path | ForEach-Object {
+            if (-not $stamped -and $_ -match '^version\s*=\s*"') {
+              $stamped = $true
+              'version = "' + $number + '"'
+            } else {
+              $_
+            }
+          }
+          if (-not $stamped) { throw "no [workspace.package] version line found in $path" }
+          $lines | Set-Content $path -Encoding utf8
+
+          # Proves the stamp landed where it was meant to, rather than trusting the match.
+          $seen = (cargo metadata --no-deps --format-version 1 | ConvertFrom-Json).packages |
+            Where-Object { $_.name -eq 'pickture' }
+          if ($seen.version -ne $number) { throw "stamped $number but cargo reports $($seen.version)" }
+          Write-Host "building as $number"
+
+      - name: Build
+        run: cargo build --release --workspace
+
+      - name: Check the binary
+        shell: pwsh
+        run: |
+          $exe = "target/release/pickture.exe"
+          if (-not (Test-Path $exe)) { throw "no binary at $exe" }
+          $size = (Get-Item $exe).Length
+          Write-Host "pickture.exe is $([math]::Round($size/1MB,1)) MB"
+          if ($size -lt 1MB) { throw "binary is implausibly small" }
+
+      # Created here, not earlier. A run that dies downloading an action would otherwise leave a tag
+      # behind naming a release that never existed, and consume a number nothing was published under.
+      - name: Create the tag
+        shell: pwsh
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git tag -a "${{ needs.version.outputs.tag }}" -m "Pickture ${{ needs.version.outputs.number }}"
+          git push origin "${{ needs.version.outputs.tag }}"
+
+      - name: Build the release notes
+        shell: pwsh
+        run: |
+          $tag = "${{ needs.version.outputs.tag }}"
+
+          $hash = (Get-FileHash target/release/pickture.exe -Algorithm SHA256).Hash.ToLower()
+          "$hash  pickture.exe" | Out-File -FilePath pickture.exe.sha256 -Encoding ascii
+
+          # The previous tag, so the log covers exactly this release. Listed and filtered rather than
+          # `git describe`, which exits non-zero on the very first release and would poison
+          # $LASTEXITCODE.
+          git config versionsort.suffix -
+          $previous = git tag --list "v*" --sort=-v:refname |
+            Where-Object { $_ -ne $tag } |
+            Select-Object -First 1
+
+          if ($previous) {
+            $heading = '## Changes since ' + $previous
+            $log = (git log --no-merges --pretty=format:"- %s" "$previous..$tag") -join "`n"
+            if (-not $log) { $log = '- No changes recorded.' }
+          } else {
+            # First release. Listing every commit would dump the whole history of the repository,
+            # including the versions that came before this one.
+            $heading = '## First release'
+            $log = '- The first published build.'
+          }
+
+          # Built as an array rather than a here-string: inside a YAML block scalar a PowerShell
+          # here-string still treats backticks as escapes, which quietly mangles fenced code. ASCII
+          # only, so no shell's idea of the default encoding can mojibake a public release page.
+          $fence = [string][char]0x60 * 3
+          $notes = @(
+            'Windows 10 and 11, 64-bit. A single executable: no installer, nothing registered.'
+            ''
+            'Windows SmartScreen will warn that it does not recognise the program, because the'
+            'binary is not signed with a paid certificate. Choose **More info**, then **Run anyway**,'
+            'or build it from source and trust your own compiler instead.'
+            ''
+            $fence
+            "SHA256  $hash"
+            $fence
+            ''
+            'Free for personal and noncommercial use under the'
+            '[PolyForm Noncommercial License 1.0.0](https://polyformproject.org/licenses/noncommercial/1.0.0/).'
+            ''
+            $heading
+            $log
+          )
+          $notes -join "`n" | Out-File -FilePath release-notes.md -Encoding utf8
+          Write-Host "--- release notes ---"
+          Get-Content release-notes.md
+
+      - name: Publish the release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          # A beta is a pre-release, and GitHub has to be told: /releases/latest/download skips
+          # pre-releases and keeps pointing at the last stable one, which is what a download button
+          # linking straight to the latest binary relies on.
+          $prerelease = if ("${{ needs.version.outputs.prerelease }}" -eq "true") { "--prerelease" } else { "" }
+
+          # --verify-tag so a release can never be created without the tag the step above pushed.
+          gh release create "${{ needs.version.outputs.tag }}" `
+            "target/release/pickture.exe" `
+            "pickture.exe.sha256" `
+            --title "Pickture ${{ needs.version.outputs.number }}" `
+            --notes-file release-notes.md `
+            --verify-tag `
+            $prerelease

@@ -1,0 +1,486 @@
+/* Pickture — direction 1a, "Darkroom instrument".
+   Deliberately single-theme. The application ships both grounds, but a site
+   about photographs is better on the dark one: it is the app's default, and a
+   near-black page lets the screenshots carry the colour. */
+
+@font-face {
+  font-family: "Plex Sans";
+  src: url("fonts/IBMPlexSans-Regular.woff2") format("woff2");
+  font-weight: 400;
+  font-display: swap;
+}
+@font-face {
+  font-family: "Plex Sans";
+  src: url("fonts/IBMPlexSans-SemiBold.woff2") format("woff2");
+  font-weight: 600;
+  font-display: swap;
+}
+@font-face {
+  font-family: "Plex Mono";
+  src: url("fonts/IBMPlexMono-Regular.woff2") format("woff2");
+  font-weight: 400;
+  font-display: swap;
+}
+
+:root {
+  --window: #17181a;
+  --rail: #1b1d1f;
+  --chrome: #1e2022;
+  --chrome-hover: #232527;
+  --surround: #4a4b4d;
+  --hair: #2c2e31;
+
+  --fg: #e7e5e1;
+  --fg-2: #a9a6a1;
+  --fg-muted: #8c8a86;
+  --fg-disabled: #5c5a56;
+
+  --sodium: #c98a2e;
+  --on-sodium: #17181a;
+
+  --sans: "Plex Sans", "Segoe UI", system-ui, -apple-system, sans-serif;
+  --mono: "Plex Mono", "Cascadia Code", ui-monospace, Consolas, monospace;
+
+  /* A prose column much wider than this stops being comfortable to read; a
+     container much wider than that leaves the column stranded at the edge. */
+  --measure: 38rem;
+  --page: 60rem;
+  --gutter: clamp(1.15rem, 5vw, 3rem);
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html {
+  scroll-behavior: smooth;
+}
+@media (prefers-reduced-motion: reduce) {
+  html {
+    scroll-behavior: auto;
+  }
+  * {
+    transition: none !important;
+  }
+}
+
+body {
+  margin: 0;
+  background: var(--window);
+  color: var(--fg);
+  font-family: var(--sans);
+  font-size: 17px;
+  line-height: 1.65;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* ---------- masthead ---------- */
+
+.masthead {
+  border-bottom: 1px solid var(--hair);
+  background: var(--chrome);
+  position: sticky;
+  top: 0;
+  z-index: 10;
+}
+.masthead__inner {
+  max-width: var(--page);
+  margin: 0 auto;
+  padding: 0 var(--gutter);
+  min-height: 54px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1.5rem;
+  flex-wrap: wrap;
+}
+.wordmark {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.6rem;
+  font-family: var(--mono);
+  font-size: 0.95rem;
+  letter-spacing: 0.06em;
+  color: var(--fg);
+  text-decoration: none;
+  padding: 0.7rem 0;
+}
+.masthead nav {
+  display: flex;
+  gap: 1.35rem;
+  flex-wrap: wrap;
+  padding-bottom: 0.4rem;
+}
+.masthead nav a {
+  color: var(--fg-muted);
+  text-decoration: none;
+  font-size: 0.94rem;
+  padding: 0.35rem 0;
+  border-bottom: 2px solid transparent;
+}
+.masthead nav a:hover {
+  color: var(--fg);
+}
+.masthead nav a[aria-current="page"] {
+  color: var(--fg);
+  border-bottom-color: var(--sodium);
+}
+
+/* ---------- layout ---------- */
+
+main {
+  max-width: var(--page);
+  margin: 0 auto;
+  padding: 0 var(--gutter) 5rem;
+}
+
+section {
+  padding: 3.2rem 0 0;
+  margin-top: 3.2rem;
+  border-top: 1px solid var(--hair);
+  max-width: var(--measure);
+}
+section:first-of-type,
+.hero {
+  border-top: none;
+  margin-top: 0;
+}
+section.wide {
+  max-width: none;
+}
+
+.hero {
+  padding: clamp(2.6rem, 7vw, 4.5rem) 0 0.5rem;
+}
+.hero__mark {
+  margin-bottom: 1.6rem;
+}
+
+h1 {
+  font-size: clamp(2.1rem, 5.2vw, 3.3rem);
+  line-height: 1.08;
+  letter-spacing: -0.02em;
+  font-weight: 600;
+  margin: 0 0 1.1rem;
+  text-wrap: balance;
+}
+h2 {
+  font-size: clamp(1.45rem, 3.2vw, 1.95rem);
+  line-height: 1.2;
+  letter-spacing: -0.015em;
+  font-weight: 600;
+  margin: 0 0 1rem;
+  text-wrap: balance;
+}
+h3 {
+  font-size: 1.12rem;
+  font-weight: 600;
+  margin: 2rem 0 0.5rem;
+  letter-spacing: -0.005em;
+}
+
+p {
+  margin: 0 0 1.1rem;
+}
+.lede {
+  font-size: 1.16rem;
+  line-height: 1.55;
+  color: var(--fg-2);
+}
+.eyebrow {
+  font-family: var(--mono);
+  font-size: 0.7rem;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--sodium);
+  margin: 0 0 0.55rem;
+}
+.hero__meta {
+  font-family: var(--mono);
+  font-size: 0.82rem;
+  color: var(--fg-muted);
+  line-height: 1.7;
+}
+
+strong {
+  font-weight: 600;
+  color: #f2f0ec;
+}
+a {
+  color: var(--sodium);
+  text-decoration: none;
+  border-bottom: 1px solid rgba(201, 138, 46, 0.35);
+}
+a:hover {
+  border-bottom-color: var(--sodium);
+}
+a:focus-visible,
+.button:focus-visible,
+.masthead nav a:focus-visible {
+  outline: 1px solid var(--sodium);
+  outline-offset: 2px;
+}
+
+code {
+  font-family: var(--mono);
+  font-size: 0.88em;
+  background: var(--chrome);
+  border: 1px solid var(--hair);
+  padding: 0.08em 0.36em;
+  color: var(--fg-2);
+}
+kbd {
+  font-family: var(--mono);
+  font-size: 0.82em;
+  background: var(--chrome);
+  border: 1px solid var(--hair);
+  border-bottom-width: 2px;
+  padding: 0.12em 0.42em;
+  color: var(--fg);
+  white-space: nowrap;
+}
+
+ul,
+ol {
+  margin: 0 0 1.2rem;
+  padding-left: 1.2rem;
+}
+li {
+  margin-bottom: 0.45rem;
+}
+li::marker {
+  color: var(--fg-disabled);
+}
+
+/* The judgement rail, reused as a section device — it is the app's one piece of
+   sodium, and it means the same thing here: this is the part that was chosen. */
+ul.facts {
+  list-style: none;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+ul.facts > li {
+  border-left: 3px solid var(--hair);
+  padding: 0.15rem 0 0.15rem 1rem;
+  margin: 0;
+}
+ul.facts > li.kept {
+  border-left-color: var(--sodium);
+}
+
+/* ---------- buttons ---------- */
+
+.actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.7rem;
+  margin: 1.7rem 0 1.2rem;
+}
+.button {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.55rem;
+  background: var(--sodium);
+  color: var(--on-sodium);
+  font-weight: 600;
+  font-size: 0.96rem;
+  padding: 0.72rem 1.15rem;
+  border: 1px solid var(--sodium);
+  text-decoration: none;
+  transition: background 90ms linear;
+}
+.button:hover {
+  background: #d99a3e;
+  border-color: #d99a3e;
+}
+.button--ghost {
+  background: transparent;
+  color: var(--fg);
+  border-color: var(--hair);
+  font-weight: 400;
+}
+.button--ghost:hover {
+  background: var(--chrome-hover);
+  border-color: var(--fg-disabled);
+}
+.button kbd {
+  background: rgba(23, 24, 26, 0.22);
+  border-color: rgba(23, 24, 26, 0.3);
+  color: inherit;
+}
+
+/* ---------- keyboard map ---------- */
+
+.keys {
+  list-style: none;
+  padding: 0;
+  margin: 1.2rem 0 1.4rem;
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  gap: 0.6rem 1.2rem;
+  align-items: baseline;
+}
+.keys dt {
+  font-family: var(--mono);
+  font-size: 0.86rem;
+  color: var(--sodium);
+  white-space: nowrap;
+}
+.keys dd {
+  margin: 0;
+  color: var(--fg-2);
+}
+
+/* ---------- screenshot frame ---------- */
+
+figure.shot {
+  margin: 1.8rem 0 2rem;
+  max-width: none;
+}
+figure.shot img {
+  display: block;
+  width: 100%;
+  height: auto;
+  border: 1px solid var(--hair);
+  background: var(--surround);
+}
+figure.shot figcaption {
+  font-family: var(--mono);
+  font-size: 0.78rem;
+  color: var(--fg-muted);
+  margin-top: 0.7rem;
+}
+
+/* ---------- tables ---------- */
+
+.table-scroll {
+  overflow-x: auto;
+  border: 1px solid var(--hair);
+  margin: 1.3rem 0 1.6rem;
+  background: var(--rail);
+}
+table {
+  border-collapse: collapse;
+  width: 100%;
+  font-size: 0.94rem;
+  min-width: 34rem;
+}
+th,
+td {
+  text-align: left;
+  padding: 0.7rem 0.9rem;
+  border-bottom: 1px solid var(--hair);
+  vertical-align: top;
+}
+thead th {
+  font-family: var(--mono);
+  font-size: 0.68rem;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--fg-muted);
+  font-weight: 400;
+  background: var(--chrome);
+}
+tbody tr:last-child td {
+  border-bottom: none;
+}
+td:first-child {
+  color: var(--fg);
+}
+
+/* ---------- code block ---------- */
+
+pre {
+  font-family: var(--mono);
+  font-size: 0.85rem;
+  line-height: 1.6;
+  background: var(--rail);
+  border: 1px solid var(--hair);
+  padding: 1rem 1.15rem;
+  overflow-x: auto;
+  margin: 1.1rem 0 1.5rem;
+  color: var(--fg-2);
+}
+pre code {
+  background: none;
+  border: none;
+  padding: 0;
+  font-size: inherit;
+  color: inherit;
+}
+
+/* ---------- callout ---------- */
+
+.note {
+  border: 1px solid var(--hair);
+  border-left: 3px solid var(--sodium);
+  background: var(--rail);
+  padding: 1.05rem 1.25rem;
+  margin: 1.5rem 0;
+}
+.note > :last-child {
+  margin-bottom: 0;
+}
+
+/* ---------- portrait ---------- */
+
+.portrait {
+  width: 108px;
+  height: 108px;
+  object-fit: cover;
+  border: 1px solid var(--hair);
+  margin: 0 0 1.4rem;
+}
+
+/* ---------- footer ---------- */
+
+footer {
+  border-top: 1px solid var(--hair);
+  background: var(--chrome);
+  margin-top: 4rem;
+}
+.footer__inner {
+  max-width: var(--page);
+  margin: 0 auto;
+  padding: 2.2rem var(--gutter) 2.6rem;
+  display: flex;
+  flex-direction: column;
+  gap: 1.1rem;
+}
+.footer__inner p {
+  color: var(--fg-muted);
+  font-size: 0.9rem;
+  max-width: var(--measure);
+  margin: 0;
+}
+.footer__links {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.6rem 1.4rem;
+}
+.footer__links a {
+  color: var(--fg-2);
+  font-size: 0.9rem;
+  border-bottom-color: transparent;
+}
+.footer__links a:hover {
+  color: var(--fg);
+  border-bottom-color: var(--fg-disabled);
+}
+
+@media (max-width: 40rem) {
+  body {
+    font-size: 16px;
+  }
+  .keys {
+    grid-template-columns: 1fr;
+    gap: 0.15rem 0;
+  }
+  .keys dd {
+    margin-bottom: 0.6rem;
+  }
+}

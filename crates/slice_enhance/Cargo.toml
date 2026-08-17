@@ -1,0 +1,10 @@
+[package]
+name = "pickture-slice-enhance"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+egui.workspace = true
+pickture-kernel.workspace = true
+pickture-ui-kit.workspace = true

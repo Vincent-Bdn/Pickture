@@ -1,0 +1,337 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Pickture, a photo culling tool</title>
+    <meta
+      name="description"
+      content="A keyboard-driven tool for getting from a thousand frames to the forty you actually want, in one sitting. Free for noncommercial use, source available, and fast. Windows."
+    />
+    <link rel="icon" href="favicon.svg" type="image/svg+xml" />
+    <link rel="stylesheet" href="pickture.css" />
+    <meta property="og:title" content="Pickture, a photo culling tool" />
+    <meta
+      property="og:description"
+      content="A thousand frames down to forty, in one sitting. Keepers are copied to a folder you choose; originals are never touched."
+    />
+    <meta property="og:type" content="website" />
+  </head>
+
+  <body>
+    <header class="masthead">
+      <div class="masthead__inner">
+        <a class="wordmark" href="index.html">
+          <svg width="20" height="20" viewBox="0 0 32 32" aria-hidden="true">
+            <rect x="4" y="18" width="24" height="3" fill="#8C8A86" />
+            <rect x="4" y="24" width="24" height="3" fill="#8C8A86" />
+            <rect x="4" y="5" width="18" height="9" fill="#C98A2E" />
+          </svg>
+          Pickture
+        </a>
+        <nav>
+          <a href="index.html" aria-current="page">The tool</a>
+          <a href="install.html">Install</a>
+          <a href="about.html">Who writes this</a>
+          <a href="https://github.com/Vincent-Bdn/pickture">Source</a>
+        </nav>
+      </div>
+    </header>
+
+    <main>
+      <section class="hero">
+        <div class="hero__mark">
+          <svg width="52" height="52" viewBox="0 0 32 32" role="img" aria-label="Pickture">
+            <rect x="4" y="18" width="24" height="3" fill="#8C8A86" />
+            <rect x="4" y="24" width="24" height="3" fill="#8C8A86" />
+            <rect x="4" y="5" width="18" height="9" fill="#C98A2E" />
+          </svg>
+        </div>
+
+        <h1>A thousand frames down to forty, in one sitting.</h1>
+
+        <p class="lede">
+          Pickture is for the part of photography that is <strong>deciding</strong>, not editing.
+          You point it at a folder, move through it with the arrow keys, and the ones you keep are
+          copied to a folder you choose. Your originals are never touched.
+        </p>
+
+        <div class="actions">
+          <a class="button" href="install.html">
+            Install Pickture
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <path d="M5 12h14M13 6l6 6-6 6" />
+            </svg>
+          </a>
+          <a class="button button--ghost" href="#loop">See how it works</a>
+        </div>
+
+        <p class="hero__meta">
+          Free for personal and noncommercial use, with nothing held back. Windows today.<br />
+          Source is public. No account, no telemetry, no network.
+        </p>
+      </section>
+
+      <!--
+        Screenshots go here once they use real photographs. The grey test frames
+        the app was built against are placeholders, and a placeholder presented
+        as a screenshot is exactly the sort of small lie that costs the trust
+        you are trying to earn.
+      -->
+
+      <section>
+        <p class="eyebrow">Why</p>
+        <h2>The bottleneck is not editing. It is choosing.</h2>
+
+        <p>
+          Come home from a shoot and you have somewhere between three hundred and twelve hundred
+          frames. Perhaps one in twenty is worth keeping. Before you can develop anything, you have
+          to look at all of them and decide — and you have to do it fast enough that you can still
+          hold a judgement in your head by the end.
+        </p>
+
+        <p>
+          The tools that do this well are expensive. The tools that are affordable are slow, or make
+          you import a whole catalogue before showing you a single picture. So the culling either
+          takes an evening it should not take, or it does not happen and the folder sits there.
+        </p>
+
+        <p>
+          Pickture does that one job. It opens a folder directly, shows you frames as fast as your
+          machine can decode them, and gets out of the way.
+        </p>
+      </section>
+
+      <section id="loop">
+        <p class="eyebrow">The loop</p>
+        <h2>Four keys, and your hand never leaves them.</h2>
+
+        <p>
+          Culling is a linear scan, so Pickture is built around one: navigate, judge, next. The whole
+          loop runs from the keyboard, and the keys stay visible in the status bar so nothing lives
+          only in a manual.
+        </p>
+
+        <dl class="keys">
+          <dt>← →</dt>
+          <dd>previous / next frame</dd>
+          <dt>↵</dt>
+          <dd>keep this one — opens the enhance page, where you confirm</dd>
+          <dt>Ctrl ↵</dt>
+          <dd>keep as shot, skipping the enhance page</dd>
+          <dt>Del</dt>
+          <dd>pass, and move on</dd>
+          <dt>Z</dt>
+          <dd>hold to inspect closely</dd>
+          <dt>[ ]</dt>
+          <dd>rotate 90°</dd>
+          <dt>O · S</dt>
+          <dd>switch folder · choose where keepers go</dd>
+        </dl>
+
+        <h3>The filmstrip remembers what you decided</h3>
+        <p>
+          Every frame carries its judgement in <strong>shape as well as colour</strong> — a rail down
+          the side of the cell, and a notch cut into the corner of kept frames. You can see where you
+          are in a folder from the corner of your eye, without reading anything, and it works just as
+          well if you do not distinguish those colours.
+        </p>
+
+        <h3>Frames you kept last time come back marked</h3>
+        <p>
+          Reopen a folder you have already worked on and the keepers are already flagged
+          <code>in selection/</code>. Pickture reads the destination folder rather than trusting its
+          own notes, so it is right even if you moved files around yourself.
+        </p>
+      </section>
+
+      <section>
+        <p class="eyebrow">Corrections</p>
+        <h2>Four operations, so twenty keepers don't force a trip to Lightroom.</h2>
+
+        <p>
+          Pickture is not an editor and will not become one. But most frames that survive a cull need
+          nothing more than a small correction, and doing that here saves opening anything else.
+        </p>
+
+        <ul class="facts">
+          <li class="kept">
+            <strong>White balance on the value channel.</strong> Lifts a flat exposure while leaving
+            hue and saturation exactly where they were.
+          </li>
+          <li class="kept">
+            <strong>White balance per channel.</strong> The one that removes a colour cast — each of
+            red, green and blue stretched independently.
+          </li>
+          <li class="kept">
+            <strong>Levels.</strong> Black point, white point and gamma, dragged directly on the
+            histogram. There is no Apply button: the picture changes as you move the handle.
+          </li>
+          <li class="kept">
+            <strong>Rotation.</strong> Quarter turns, which are lossless, plus a fine angle to
+            straighten a horizon — cropped back to the original shape, so what you see is what gets
+            written.
+          </li>
+        </ul>
+
+        <p>
+          Everything is applied to a copy. The file you shot is opened, read, and never written to.
+        </p>
+      </section>
+
+      <section>
+        <p class="eyebrow">Speed</p>
+        <h2>Why it feels immediate.</h2>
+
+        <p>
+          A photo tool lives or dies on the delay between pressing an arrow key and seeing the next
+          picture. Most of Pickture's engineering is spent on that one number.
+        </p>
+
+        <ul class="facts">
+          <li>
+            <strong>Thumbnails come from the JPEG already inside your file.</strong> Cameras write a
+            small preview into the EXIF block; reading it is a seek rather than a decode.
+          </li>
+          <li>
+            <strong>They are cached on disk.</strong> Reopening a folder you have already culled is
+            effectively instant, however large it is.
+          </li>
+          <li>
+            <strong>The next ten frames are decoded before you get to them.</strong> Culling moves in
+            one direction, so the picture you are about to ask for is usually already waiting.
+          </li>
+          <li>
+            <strong>Pictures decode at the size of your screen</strong>, not the size of your sensor.
+            A 24 megapixel frame has about twenty times more detail than a display can show.
+          </li>
+        </ul>
+
+        <p>
+          The result on a 24 megapixel photograph: about 46 ms for a thumbnail and 75 ms for a full
+          preview, on one core, with the rest of the work happening ahead of you in the background.
+          Written in Rust, which is what makes that affordable.
+        </p>
+      </section>
+
+      <section>
+        <p class="eyebrow">Honesty</p>
+        <h2>What Pickture does not do.</h2>
+        <p>
+          Better to know before you download it. These are refusals, not gaps waiting to be filled.
+        </p>
+
+        <div class="table-scroll">
+          <table>
+            <thead>
+              <tr>
+                <th scope="col">Not in Pickture</th>
+                <th scope="col">Why</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>Raw files (ARW, CR3, NEF, DNG)</td>
+                <td>
+                  Not yet, and I would rather say so than list formats it cannot open. JPEG, PNG,
+                  TIFF, BMP, GIF and WebP work today.
+                </td>
+              </tr>
+              <tr>
+                <td>A catalogue or a library</td>
+                <td>
+                  Pickture opens folders. Nothing is imported, nothing is indexed, and uninstalling it
+                  leaves your pictures exactly as they were.
+                </td>
+              </tr>
+              <tr>
+                <td>Curves, masks, local adjustments, presets</td>
+                <td>
+                  That is a photo editor, and good ones already exist. Four operations cover the
+                  frames that only need a nudge.
+                </td>
+              </tr>
+              <tr>
+                <td>Cloud sync, accounts, sharing</td>
+                <td>
+                  There is no server. Pickture never opens a network connection, so there is nothing
+                  to sign in to and nothing to leak.
+                </td>
+              </tr>
+              <tr>
+                <td>macOS and Linux builds</td>
+                <td>
+                  The code is portable and has no Windows-specific dependencies, but I only test on
+                  Windows. Building from source on the others should work.
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <section>
+        <p class="eyebrow">Your files</p>
+        <h2>Copies only. Never moves, never overwrites.</h2>
+        <p>
+          Keeping a frame copies it into a destination folder — <code>selection/</code> beside your
+          photos by default, or any folder you point it at, or a dated subfolder for a second pass.
+          The destination is shown permanently next to the keep action, because it is the one setting
+          that changes what lands on your disk.
+        </p>
+        <p>
+          If a file of the same name is already there, Pickture writes alongside it and says so
+          rather than replacing anything. Your original files are opened read-only and are never
+          modified, moved or deleted.
+        </p>
+      </section>
+
+      <section>
+        <p class="eyebrow">Who</p>
+        <h2>Written by one person, for his own photographs.</h2>
+        <p>
+          Pickture is not a product. I take pictures — wildlife, and my family — and I wanted a tool
+          for the boring half of that hobby that I did not have to fight, pay a subscription for, or
+          wait on.
+        </p>
+        <div class="actions">
+          <a class="button button--ghost" href="about.html">Who writes this</a>
+        </div>
+      </section>
+
+      <section>
+        <h2>Point it at a folder. That is the whole setup.</h2>
+        <p>
+          There is no first-run wizard, no account, and nothing to configure. Download it, open a
+          folder of photographs, and start.
+        </p>
+        <div class="actions">
+          <a class="button" href="install.html">
+            Install Pickture
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <path d="M5 12h14M13 6l6 6-6 6" />
+            </svg>
+          </a>
+        </div>
+      </section>
+    </main>
+
+    <footer>
+      <div class="footer__inner">
+        <p>
+          Pickture, a photo culling tool. Free for personal and noncommercial use under the
+          <a href="https://polyformproject.org/licenses/noncommercial/1.0.0/">PolyForm Noncommercial
+          License 1.0.0</a>; the source is public. Your photographs are covered by no licence at
+          all: they are yours, in the folders you put them in, in the formats your camera wrote.
+        </p>
+        <div class="footer__links">
+          <a href="index.html">The tool</a>
+          <a href="install.html">Install</a>
+          <a href="about.html">Who writes this</a>
+          <a href="https://github.com/Vincent-Bdn/pickture">Source</a>
+          <a href="https://github.com/Vincent-Bdn/pickture/issues">Report a problem</a>
+        </div>
+      </div>
+    </footer>
+  </body>
+</html>

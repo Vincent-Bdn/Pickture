@@ -1,0 +1,10 @@
+[package]
+name = "pickture-ui-kit"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+egui.workspace = true
+pickture-kernel.workspace = true
+image.workspace = true

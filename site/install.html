@@ -1,0 +1,202 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Installing Pickture</title>
+    <meta
+      name="description"
+      content="Download Pickture for Windows, or build it from source with Rust. No installer, no account, no first-run wizard."
+    />
+    <link rel="icon" href="favicon.svg" type="image/svg+xml" />
+    <link rel="stylesheet" href="pickture.css" />
+  </head>
+
+  <body>
+    <header class="masthead">
+      <div class="masthead__inner">
+        <a class="wordmark" href="index.html">
+          <svg width="20" height="20" viewBox="0 0 32 32" aria-hidden="true">
+            <rect x="4" y="18" width="24" height="3" fill="#8C8A86" />
+            <rect x="4" y="24" width="24" height="3" fill="#8C8A86" />
+            <rect x="4" y="5" width="18" height="9" fill="#C98A2E" />
+          </svg>
+          Pickture
+        </a>
+        <nav>
+          <a href="index.html">The tool</a>
+          <a href="install.html" aria-current="page">Install</a>
+          <a href="about.html">Who writes this</a>
+          <a href="https://github.com/Vincent-Bdn/pickture">Source</a>
+        </nav>
+      </div>
+    </header>
+
+    <main>
+      <section class="hero">
+        <p class="eyebrow">Install</p>
+        <h1>One file. No installer.</h1>
+        <p class="lede">
+          Pickture is a single executable. Nothing is registered, no runtime is needed, and removing
+          it is deleting the file.
+        </p>
+        <div class="actions">
+          <a class="button" href="https://github.com/Vincent-Bdn/pickture/releases">
+            Download for Windows
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <path d="M12 4v12M6 12l6 6 6-6M5 20h14" />
+            </svg>
+          </a>
+        </div>
+        <p class="hero__meta">Windows 10 and 11, 64-bit. Around 10 MB.</p>
+      </section>
+
+      <section>
+        <h2>First run</h2>
+        <p>
+          Windows may warn that it does not recognise the program. That is SmartScreen reporting that
+          the file is not signed by a certificate I have paid for, not that anything is wrong with
+          it — choose <strong>More info</strong>, then <strong>Run anyway</strong>. If you would
+          rather not take my word for it, the section below builds the same program from source.
+        </p>
+        <p>
+          Pickture then asks for a folder of photographs. There is no wizard, no account and nothing
+          to configure. Folders you have opened before appear on that first screen with how far
+          through them you got.
+        </p>
+      </section>
+
+      <section>
+        <h2>Building from source</h2>
+        <p>
+          You need <a href="https://rustup.rs/">Rust</a>. Nothing else — the fonts and the icon are
+          compiled into the binary, and there are no system libraries to install.
+        </p>
+        <pre><code>git clone https://github.com/Vincent-Bdn/pickture
+cd pickture
+cargo run --release</code></pre>
+        <p>
+          The finished binary is at <code>target/release/pickture.exe</code> and can be moved
+          anywhere. To check the build before trusting it:
+        </p>
+        <pre><code>cargo test --workspace</code></pre>
+        <p>
+          macOS and Linux are not tested, but nothing in the code is Windows-specific and the same
+          commands should work.
+        </p>
+      </section>
+
+      <section>
+        <h2>Where Pickture keeps things</h2>
+
+        <div class="table-scroll">
+          <table>
+            <thead>
+              <tr>
+                <th scope="col">What</th>
+                <th scope="col">Where</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>Your photographs</td>
+                <td>
+                  Exactly where you left them. Pickture opens them read-only and never writes to
+                  them.
+                </td>
+              </tr>
+              <tr>
+                <td>Keepers</td>
+                <td>
+                  <code>selection/</code> beside your photographs by default, or wherever you point
+                  it. Copies, never moves.
+                </td>
+              </tr>
+              <tr>
+                <td>Sessions</td>
+                <td>
+                  <code>%APPDATA%\Pickture\config\sessions.json</code> — which folders you have
+                  opened, where you stopped, what you kept. Plain JSON. Safe to delete.
+                </td>
+              </tr>
+              <tr>
+                <td>Thumbnail cache</td>
+                <td>
+                  <code>%LOCALAPPDATA%\Pickture\cache</code> — rebuilt on demand. Safe to delete at
+                  any time.
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        <div class="note">
+          <p>
+            <strong>To uninstall:</strong> delete <code>pickture.exe</code>, and the two folders
+            above if you want the record gone too. There is no uninstaller because there is nothing
+            registered to undo.
+          </p>
+        </div>
+      </section>
+
+      <section>
+        <h2>Supported formats</h2>
+        <p>
+          JPEG, PNG, TIFF, BMP, GIF and WebP. <strong>Raw files are not supported yet</strong> — if
+          you shoot ARW, CR3, NEF or DNG, Pickture will not see them in the folder. That is the
+          largest thing missing, and it is stated here rather than discovered after downloading.
+        </p>
+        <div class="actions">
+          <a class="button button--ghost" href="https://github.com/Vincent-Bdn/pickture/issues">
+            Report a problem
+          </a>
+        </div>
+      </section>
+
+      <section>
+        <h2>Licence</h2>
+        <p>
+          Pickture is released under the
+          <a href="https://polyformproject.org/licenses/noncommercial/1.0.0/">PolyForm Noncommercial
+          License 1.0.0</a>. In plain terms: <strong>free for any noncommercial purpose</strong> —
+          personal use, hobby photography, charities, schools, public research and government bodies
+          all count, whatever their funding. You can read the source, build it, modify it and pass it
+          on, on the same terms.
+        </p>
+        <p>
+          What it does not permit is commercial use. If you would earn money from the photographs you
+          cull with it — a wedding photographer, a photo agency, a studio — that needs a separate
+          arrangement. <a href="https://www.linkedin.com/in/vincent-bodin-20840867/">Ask me</a>; it is
+          not a trap, it just is not covered by this licence.
+        </p>
+        <div class="note">
+          <p>
+            To be precise about a word this page deliberately avoids: because of that restriction
+            Pickture is <strong>source available</strong>, not <strong>open source</strong>. The Open
+            Source Definition does not allow a licence to discriminate between fields of use, and a
+            noncommercial clause does exactly that. The source is public and you can read every line
+            of it — but calling it open source would be inaccurate.
+          </p>
+        </div>
+      </section>
+    </main>
+
+    <footer>
+      <div class="footer__inner">
+        <p>
+          Pickture, a photo culling tool. Free for personal and noncommercial use under the
+          <a href="https://polyformproject.org/licenses/noncommercial/1.0.0/">PolyForm Noncommercial
+          License 1.0.0</a>; the source is public. Your photographs are covered by no licence at
+          all: they are yours, in the folders you put them in, in the formats your camera wrote.
+        </p>
+        <div class="footer__links">
+          <a href="index.html">The tool</a>
+          <a href="about.html">Who writes this</a>
+          <a href="https://github.com/Vincent-Bdn/pickture">Source</a>
+          <a href="https://github.com/Vincent-Bdn/pickture/issues">Report a problem</a>
+          <a href="https://lysta.fr/">Lysta</a>
+        </div>
+      </div>
+    </footer>
+  </body>
+</html>
