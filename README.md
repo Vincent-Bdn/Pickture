@@ -1,5 +1,10 @@
 ![Pickture](images/pickture.png)
 
+**[pickture website](https://vincent-bdn.github.io/pickture/)** ·
+[install](https://vincent-bdn.github.io/pickture/install.html) ·
+[who writes this](https://vincent-bdn.github.io/pickture/about.html) ·
+[releases](https://github.com/Vincent-Bdn/pickture/releases)
+
 A keyboard-driven photo-culling tool. A thousand frames down to forty, in one
 sitting. Keepers are copied to a destination folder; originals are never touched.
 
