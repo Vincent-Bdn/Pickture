@@ -212,16 +212,6 @@ jobs:
           Write-Host "pickture.exe is $([math]::Round($size/1MB,1)) MB"
           if ($size -lt 1MB) { throw "binary is implausibly small" }
 
-      # Created here, not earlier. A run that dies downloading an action would otherwise leave a tag
-      # behind naming a release that never existed, and consume a number nothing was published under.
-      - name: Create the tag
-        shell: pwsh
-        run: |
-          git config user.name  "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git tag -a "${{ needs.version.outputs.tag }}" -m "Pickture ${{ needs.version.outputs.number }}"
-          git push origin "${{ needs.version.outputs.tag }}"
-
       - name: Build the release notes
         shell: pwsh
         run: |
@@ -240,7 +230,9 @@ jobs:
 
           if ($previous) {
             $heading = '## Changes since ' + $previous
-            $log = (git log --no-merges --pretty=format:"- %s" "$previous..$tag") -join "`n"
+            # ..HEAD, not ..$tag: the tag does not exist yet. It is created by the release step
+            # below, which is the last thing that happens.
+            $log = (git log --no-merges --pretty=format:"- %s" "$previous..HEAD") -join "`n"
             if (-not $log) { $log = '- No changes recorded.' }
           } else {
             # First release. Listing every commit would dump the whole history of the repository,
@@ -274,21 +266,32 @@ jobs:
           Write-Host "--- release notes ---"
           Get-Content release-notes.md
 
+      # Creating the release also creates the tag, at the commit that was just built, and this is the
+      # last thing the workflow does. One operation rather than two means there is no window in which
+      # a tag exists naming a release that does not: either both appear or neither does. An earlier
+      # version pushed the tag in its own step and left one orphaned when this step failed.
       - name: Publish the release
         shell: pwsh
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
+          # Built as an array. A `$prerelease` variable holding "" is still passed to gh as an
+          # argument -- an empty one -- and gh reads a bare argument as a file to attach, so a
+          # stable release died with `no matches found for ''`. Conditionally appending means the
+          # flag is either there or absent, never present-but-empty.
+          $arguments = @(
+            'release', 'create', '${{ needs.version.outputs.tag }}'
+            'target/release/pickture.exe'
+            'pickture.exe.sha256'
+            '--target', $env:GITHUB_SHA
+            '--title', 'Pickture ${{ needs.version.outputs.number }}'
+            '--notes-file', 'release-notes.md'
+          )
+
           # A beta is a pre-release, and GitHub has to be told: /releases/latest/download skips
           # pre-releases and keeps pointing at the last stable one, which is what a download button
           # linking straight to the latest binary relies on.
-          $prerelease = if ("${{ needs.version.outputs.prerelease }}" -eq "true") { "--prerelease" } else { "" }
+          if ("${{ needs.version.outputs.prerelease }}" -eq "true") { $arguments += '--prerelease' }
 
-          # --verify-tag so a release can never be created without the tag the step above pushed.
-          gh release create "${{ needs.version.outputs.tag }}" `
-            "target/release/pickture.exe" `
-            "pickture.exe.sha256" `
-            --title "Pickture ${{ needs.version.outputs.number }}" `
-            --notes-file release-notes.md `
-            --verify-tag `
-            $prerelease
+          Write-Host "gh $($arguments -join ' ')"
+          gh @arguments
