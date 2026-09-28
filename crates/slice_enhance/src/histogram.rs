@@ -9,16 +9,38 @@
 //! edge is the handle** — there is no separate grip to hunt for. Pointer-down
 //! anywhere grabs whichever of the three is nearest.
 
-use egui::{Pos2, Rect, Sense, Ui, Vec2};
-use pickture_kernel::{EffectMode, EffectSpec, GAMMA_MAX, GAMMA_MIN};
+use egui::{Color32, Pos2, Rect, Sense, Ui, Vec2};
+use pickture_kernel::{EffectMode, EffectSpec, LevelsChannel, GAMMA_MAX, GAMMA_MIN};
 use pickture_ui_kit::paint;
 use pickture_ui_kit::tokens::metric;
 use pickture_ui_kit::tokens::Theme;
 
 use crate::{EnhanceState, Handle};
 
-/// Bars drawn across the 256 luminance bins.
+/// Bars drawn across the 256 bins.
 const BARS: usize = 56;
+
+/// The three channel tints.
+///
+/// The palette is achromatic on purpose, and this is the one place that has to
+/// break with it: a per-channel histogram that does not say which channel it is
+/// showing cannot be read. They are desaturated to roughly the luminance of the
+/// achromatic bar, so they identify the channel without competing with the
+/// frame.
+pub const TINTS: [Color32; 3] = [
+    Color32::from_rgb(0xB0, 0x6A, 0x62),
+    Color32::from_rgb(0x74, 0x9E, 0x72),
+    Color32::from_rgb(0x6C, 0x88, 0xB4),
+];
+
+/// The ink for one channel — the histogram bars, and the marker on the readouts
+/// that belong to it. Luminance keeps the achromatic bar colour.
+pub fn tint_of(channel: LevelsChannel, theme: &Theme) -> Color32 {
+    match channel.index() {
+        None => theme.hist_bar,
+        Some(i) => TINTS[i],
+    }
+}
 /// Every bar keeps a floor so an empty bin still reads as a bin rather than a
 /// gap in the chart.
 const MIN_BAR: f32 = 0.10;
@@ -76,11 +98,12 @@ fn x_to_gamma(x: f32) -> f32 {
 }
 
 /// Whichever handle is nearest the pointer, in 0..255 space.
-fn nearest(spec: &EffectSpec, value: f32) -> Handle {
+fn nearest(spec: &EffectSpec, channel: LevelsChannel, value: f32) -> Handle {
+    let levels = spec.levels_of(channel);
     let candidates = [
-        (Handle::Black, (value - spec.low as f32).abs()),
-        (Handle::White, (value - spec.high as f32).abs()),
-        (Handle::Gamma, (value - gamma_to_x(spec.gamma)).abs()),
+        (Handle::Black, (value - levels.low as f32).abs()),
+        (Handle::White, (value - levels.high as f32).abs()),
+        (Handle::Gamma, (value - gamma_to_x(levels.gamma)).abs()),
     ];
     candidates
         .iter()
@@ -90,6 +113,9 @@ fn nearest(spec: &EffectSpec, value: f32) -> Handle {
 }
 
 /// Draw and drive the histogram. Returns true when the spec changed.
+///
+/// `hist` is whichever distribution `state.channel` selects — the caller owns
+/// the bins, because they come from the decoded proxy, not from the spec.
 pub fn draw(
     ui: &mut Ui,
     theme: &Theme,
@@ -99,6 +125,10 @@ pub fn draw(
     state: &mut EnhanceState,
 ) -> bool {
     paint::fill(ui.painter(), rect, theme.hist_ground);
+
+    let channel = state.channel;
+    let levels = spec.levels_of(channel);
+    let bar_ink = tint_of(channel, theme);
 
     // ---- bars ------------------------------------------------------------
     let inner = rect.shrink(metric::HAIR);
@@ -110,7 +140,7 @@ pub fn draw(
             // 1 pt gap between bars.
             Vec2::new((bar_w - 1.0).max(1.0), height),
         );
-        paint::fill(ui.painter(), bar, theme.hist_bar);
+        paint::fill(ui.painter(), bar, bar_ink);
     }
 
     let value_to_x = |v: f32| inner.left() + (v / 255.0) * inner.width();
@@ -120,16 +150,16 @@ pub fn draw(
     // edge is the handle.
     let veil = theme.window.gamma_multiply(0.72);
 
-    let low_x = value_to_x(spec.low as f32);
-    if spec.low > 0 {
+    let low_x = value_to_x(levels.low as f32);
+    if levels.low > 0 {
         paint::fill(
             ui.painter(),
             Rect::from_min_max(inner.left_top(), Pos2::new(low_x, inner.bottom())),
             veil,
         );
     }
-    let high_x = value_to_x(spec.high as f32);
-    if spec.high < 255 {
+    let high_x = value_to_x(levels.high as f32);
+    if levels.high < 255 {
         paint::fill(
             ui.painter(),
             Rect::from_min_max(Pos2::new(high_x, inner.top()), inner.right_bottom()),
@@ -151,7 +181,7 @@ pub fn draw(
     edge(high_x);
 
     // ---- gamma marker ----------------------------------------------------
-    let gx = value_to_x(gamma_to_x(spec.gamma));
+    let gx = value_to_x(gamma_to_x(levels.gamma));
     paint::fill(
         ui.painter(),
         Rect::from_min_size(
@@ -174,7 +204,7 @@ pub fn draw(
     if response.drag_started() || response.clicked() {
         if let Some(pos) = response.interact_pointer_pos() {
             let v = ((pos.x - inner.left()) / inner.width().max(1.0) * 255.0).clamp(0.0, 255.0);
-            state.drag = Some(nearest(spec, v));
+            state.drag = Some(nearest(spec, channel, v));
         }
     }
 
@@ -185,9 +215,9 @@ pub fn draw(
             // handle already is.
             let v = if ui.input(|i| i.modifiers.shift) {
                 let current = match handle {
-                    Handle::Black => spec.low as f32,
-                    Handle::White => spec.high as f32,
-                    Handle::Gamma => gamma_to_x(spec.gamma),
+                    Handle::Black => levels.low as f32,
+                    Handle::White => levels.high as f32,
+                    Handle::Gamma => gamma_to_x(levels.gamma),
                     Handle::Angle => raw,
                 };
                 current + (raw - current) * 0.5
@@ -196,9 +226,9 @@ pub fn draw(
             };
 
             match handle {
-                Handle::Black => spec.set_low(v.round() as u8),
-                Handle::White => spec.set_high(v.round() as u8),
-                Handle::Gamma => spec.set_gamma(x_to_gamma(v)),
+                Handle::Black => spec.edit_levels(channel, |l| l.set_low(v.round() as u8)),
+                Handle::White => spec.edit_levels(channel, |l| l.set_high(v.round() as u8)),
+                Handle::Gamma => spec.edit_levels(channel, |l| l.set_gamma(x_to_gamma(v))),
                 Handle::Angle => {}
             }
             changed = true;
@@ -228,11 +258,15 @@ pub fn draw(
         });
         if delta != 0.0 {
             match handle {
-                Handle::Black => spec.set_low((spec.low as f32 + delta).clamp(0.0, 255.0) as u8),
-                Handle::White => spec.set_high((spec.high as f32 + delta).clamp(0.0, 255.0) as u8),
-                Handle::Gamma => {
-                    spec.set_gamma(spec.gamma + delta * (GAMMA_MAX - GAMMA_MIN) / 255.0)
-                }
+                Handle::Black => spec.edit_levels(channel, |l| {
+                    l.set_low((l.low as f32 + delta).clamp(0.0, 255.0) as u8)
+                }),
+                Handle::White => spec.edit_levels(channel, |l| {
+                    l.set_high((l.high as f32 + delta).clamp(0.0, 255.0) as u8)
+                }),
+                Handle::Gamma => spec.edit_levels(channel, |l| {
+                    l.set_gamma(l.gamma + delta * (GAMMA_MAX - GAMMA_MIN) / 255.0)
+                }),
                 Handle::Angle => {}
             }
             changed = true;
@@ -240,9 +274,11 @@ pub fn draw(
     }
 
     // Touching a handle means you are working on levels — say so rather than
-    // silently editing a mode that is not selected.
-    if changed && spec.mode != EffectMode::Levels {
+    // silently editing a mode that is not selected. The same goes for having a
+    // colour channel selected: the handles just moved are that channel's.
+    if changed {
         spec.mode = EffectMode::Levels;
+        spec.per_channel = channel.index().is_some();
     }
 
     changed
@@ -303,8 +339,22 @@ mod tests {
             gamma: 1.0,
             ..Default::default()
         };
-        assert_eq!(nearest(&spec, 22.0), Handle::Black);
-        assert_eq!(nearest(&spec, 238.0), Handle::White);
-        assert_eq!(nearest(&spec, gamma_to_x(1.0)), Handle::Gamma);
+        let luma = LevelsChannel::Luma;
+        assert_eq!(nearest(&spec, luma, 22.0), Handle::Black);
+        assert_eq!(nearest(&spec, luma, 238.0), Handle::White);
+        assert_eq!(nearest(&spec, luma, gamma_to_x(1.0)), Handle::Gamma);
+    }
+
+    #[test]
+    fn nearest_handle_reads_the_selected_channel() {
+        // The luminance handles are wide open and the red ones are not, so the
+        // same pointer position picks a different handle per channel.
+        let mut spec = EffectSpec::default();
+        spec.edit_levels(LevelsChannel::Red, |l| {
+            l.set_high(120);
+            l.set_low(100);
+        });
+        assert_eq!(nearest(&spec, LevelsChannel::Red, 118.0), Handle::White);
+        assert_eq!(nearest(&spec, LevelsChannel::Luma, 118.0), Handle::Gamma);
     }
 }

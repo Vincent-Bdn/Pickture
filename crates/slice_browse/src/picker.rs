@@ -12,11 +12,24 @@ use pickture_ui_kit::paint;
 use pickture_ui_kit::tokens::{self, metric, size, Theme};
 
 use crate::{folder_row, BrowseEvent, BrowseState, FolderRow};
+use std::path::Path;
 
 const COLUMN_W: f32 = 720.0;
 const GAP: f32 = 34.0;
 const MARK: f32 = 46.0;
 const ROW_H: f32 = 42.0;
+
+/// A folder being read, for as long as that takes.
+///
+/// Reading a folder means a file header per frame, because every filmstrip cell
+/// has to be laid out at its final height before its image exists. On a card of
+/// a thousand frames that is not instant, and this screen used to say nothing at
+/// all about it: the click looked ignored, so it got clicked again.
+pub struct Scan<'a> {
+    pub folder: &'a Path,
+    pub probed: usize,
+    pub total: usize,
+}
 
 pub fn folder_picker(
     ui: &mut Ui,
@@ -24,6 +37,7 @@ pub fn folder_picker(
     rect: Rect,
     store: &SessionStore,
     state: &mut BrowseState,
+    scan: Option<Scan<'_>>,
 ) -> Option<BrowseEvent> {
     paint::fill(ui.painter(), rect, theme.window);
 
@@ -104,7 +118,9 @@ pub fn folder_picker(
         Vec2::new(btn_w, size::SANS_M + 24.0),
     );
     let btn = ui.interact(btn_rect, ui.id().with("pick-folder"), Sense::click());
-    let btn_bg = if btn.hovered() {
+    let btn_bg = if scan.is_some() {
+        theme.sodium.gamma_multiply(0.45)
+    } else if btn.hovered() {
         theme.sodium.gamma_multiply(0.88)
     } else {
         theme.sodium
@@ -117,20 +133,64 @@ pub fn folder_picker(
         btn_font,
         theme.on_sodium,
     );
-    if btn.clicked() {
+    // A click during a scan is dropped rather than queued. Queued, it opened a
+    // second dialog the moment the first was dealt with, which is how one press
+    // per folder turned into four.
+    if btn.clicked() && scan.is_none() {
         event = Some(BrowseEvent::BrowseForFolder);
     }
-    if btn.hovered() {
+    if btn.hovered() && scan.is_none() {
         ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
     }
 
-    paint::text_left(
-        ui.painter(),
-        Pos2::new(btn_rect.right() + metric::S12, btn_rect.center().y),
-        "or drop one anywhere in this window",
-        tokens::mono(size::MONO_M),
-        theme.fg_muted,
-    );
+    match &scan {
+        None => {
+            paint::text_left(
+                ui.painter(),
+                Pos2::new(btn_rect.right() + metric::S12, btn_rect.center().y),
+                "or drop one anywhere in this window",
+                tokens::mono(size::MONO_M),
+                theme.fg_muted,
+            );
+        }
+        Some(scan) => {
+            let name = scan
+                .folder
+                .file_name()
+                .map(|s| s.to_string_lossy().into_owned())
+                .unwrap_or_else(|| scan.folder.display().to_string());
+            let x = btn_rect.right() + metric::S12;
+            let limit = (col.right() - x).max(80.0);
+
+            // Said in frames rather than as a percentage: the number that tells
+            // you whether to wait is how many frames there are.
+            let line = if scan.total == 0 {
+                format!("Reading {name}…")
+            } else {
+                format!("Reading {name} · {} of {} frames", scan.probed, scan.total)
+            };
+            let font = tokens::mono(size::MONO_M);
+            let shown = paint::elide(ui.painter(), &line, &font, limit);
+            paint::text_left(
+                ui.painter(),
+                Pos2::new(x, btn_rect.center().y - 7.0),
+                &shown,
+                font,
+                theme.fg_secondary,
+            );
+
+            let track = Rect::from_min_size(
+                Pos2::new(x, btn_rect.center().y + 8.0),
+                Vec2::new(limit.min(280.0), metric::RAIL),
+            );
+            let fraction = if scan.total == 0 {
+                0.0
+            } else {
+                scan.probed as f32 / scan.total as f32
+            };
+            paint::progress(ui.painter(), theme, track, fraction);
+        }
+    }
 
     // ---- recent ---------------------------------------------------------
     if !recent.is_empty() {
@@ -159,7 +219,7 @@ pub fn folder_picker(
                 is_current: i == state.recent_index,
                 is_focused: i == state.recent_index,
             };
-            if folder_row(ui, theme, row_rect, &row, false) {
+            if folder_row(ui, theme, row_rect, &row, false) && scan.is_none() {
                 event = Some(BrowseEvent::OpenFolder(path.clone()));
             }
         }

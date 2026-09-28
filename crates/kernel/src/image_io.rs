@@ -448,6 +448,90 @@ fn find_app1(jpeg: &[u8]) -> Option<&[u8]> {
     None
 }
 
+/// Rewrite every `Orientation` tag in an APP1 block to 1 — upright.
+///
+/// Every decode path here bakes the original orientation into the pixels, and
+/// the user's own quarter turns are applied on top of that, so the frame handed
+/// to the encoder is already the right way up. Carrying the original tag across
+/// unchanged told every viewer to turn it a second time: a frame shot portrait
+/// and rotated 90° by hand came back out looking exactly like the original,
+/// which is what made a rotation look like it had been lost.
+///
+/// The value is patched in place rather than removed. A SHORT lives inside its
+/// own 12-byte IFD entry, so overwriting it moves nothing; deleting the entry
+/// would move every offset in the block.
+fn upright_app1(app1: &[u8]) -> Vec<u8> {
+    // FF E1, length (2), "Exif\0\0" (6) — the TIFF header starts at 10.
+    const TIFF: usize = 10;
+    const ORIENTATION: u16 = 0x0112;
+
+    let mut out = app1.to_vec();
+    if out.len() < TIFF + 8 {
+        return out;
+    }
+    let little = match &out[TIFF..TIFF + 2] {
+        b"II" => true,
+        b"MM" => false,
+        _ => return out,
+    };
+    let read16 = |b: &[u8], i: usize| -> u16 {
+        let v = [b[i], b[i + 1]];
+        if little {
+            u16::from_le_bytes(v)
+        } else {
+            u16::from_be_bytes(v)
+        }
+    };
+    let read32 = |b: &[u8], i: usize| -> u32 {
+        let v = [b[i], b[i + 1], b[i + 2], b[i + 3]];
+        if little {
+            u32::from_le_bytes(v)
+        } else {
+            u32::from_be_bytes(v)
+        }
+    };
+
+    // IFD0, then IFD1 — the thumbnail directory carries its own copy of the tag.
+    let mut offset = read32(&out, TIFF + 4) as usize;
+    for _ in 0..2 {
+        if offset == 0 {
+            break;
+        }
+        let base = TIFF + offset;
+        if base + 2 > out.len() {
+            break;
+        }
+        let count = read16(&out, base) as usize;
+        let after = base + 2 + count * 12;
+        if after + 4 > out.len() {
+            break;
+        }
+        for entry in 0..count {
+            let at = base + 2 + entry * 12;
+            if read16(&out, at) != ORIENTATION {
+                continue;
+            }
+            let value = at + 8;
+            match read16(&out, at + 2) {
+                // SHORT and LONG are both left-justified in the value field.
+                3 => out[value..value + 2].copy_from_slice(&if little {
+                    1u16.to_le_bytes()
+                } else {
+                    1u16.to_be_bytes()
+                }),
+                4 => out[value..value + 4].copy_from_slice(&if little {
+                    1u32.to_le_bytes()
+                } else {
+                    1u32.to_be_bytes()
+                }),
+                _ => {}
+            }
+        }
+        offset = read32(&out, after) as usize;
+    }
+    out
+}
+
 /// Splice an APP1 segment in immediately after SOI.
 fn insert_app1(jpeg: &[u8], app1: &[u8]) -> Vec<u8> {
     let mut out = Vec::with_capacity(jpeg.len() + app1.len());
@@ -482,7 +566,8 @@ pub fn carry_exif(encoded: Vec<u8>, original: &Path, out_path: &Path) -> Vec<u8>
     }
 
     match find_app1(&src) {
-        Some(app1) => insert_app1(&encoded, app1),
+        // Upright, because the pixels already are.
+        Some(app1) => insert_app1(&encoded, &upright_app1(app1)),
         None => encoded,
     }
 }
@@ -531,6 +616,76 @@ mod tests {
         // Declares a length that runs past the end of the buffer.
         let src = vec![0xFF, 0xD8, 0xFF, 0xE1, 0xFF, 0xFE, 0x00];
         assert!(find_app1(&src).is_none());
+    }
+
+    /// Build a minimal APP1 block with one IFD0 entry: Orientation = `value`.
+    fn app1_with_orientation(value: u16, little: bool) -> Vec<u8> {
+        let put16 = |t: &mut Vec<u8>, v: u16| {
+            t.extend_from_slice(&if little {
+                v.to_le_bytes()
+            } else {
+                v.to_be_bytes()
+            })
+        };
+        let put32 = |t: &mut Vec<u8>, v: u32| {
+            t.extend_from_slice(&if little {
+                v.to_le_bytes()
+            } else {
+                v.to_be_bytes()
+            })
+        };
+
+        let mut tiff = Vec::new();
+        tiff.extend_from_slice(if little { b"II" } else { b"MM" });
+        put16(&mut tiff, 42);
+        put32(&mut tiff, 8); // IFD0 sits right after the header
+        put16(&mut tiff, 1); // one entry
+        put16(&mut tiff, 0x0112); // Orientation
+        put16(&mut tiff, 3); // SHORT
+        put32(&mut tiff, 1); // count
+        put16(&mut tiff, value); // value, left-justified
+        tiff.extend_from_slice(&[0, 0]); // padding of the value field
+        put32(&mut tiff, 0); // no IFD1
+
+        let payload_len = 6 + tiff.len();
+        let mut app1 = vec![0xFF, 0xE1];
+        app1.extend_from_slice(&((payload_len + 2) as u16).to_be_bytes());
+        app1.extend_from_slice(b"Exif\0\0");
+        app1.extend_from_slice(&tiff);
+        app1
+    }
+
+    #[test]
+    fn carried_orientation_is_reset_to_upright() {
+        // The pixels are rotated before they are encoded, so a carried
+        // orientation would turn the written frame a second time.
+        for little in [true, false] {
+            let app1 = app1_with_orientation(6, little);
+            let patched = upright_app1(&app1);
+            assert_eq!(patched.len(), app1.len(), "the block must not move");
+
+            let tiff = &patched[10..];
+            let read16 = |i: usize| {
+                let v = [tiff[i], tiff[i + 1]];
+                if little {
+                    u16::from_le_bytes(v)
+                } else {
+                    u16::from_be_bytes(v)
+                }
+            };
+            // IFD0 at 8: count, then tag / type / count / value.
+            assert_eq!(read16(10), 0x0112);
+            assert_eq!(read16(18), 1, "orientation should read upright");
+        }
+    }
+
+    #[test]
+    fn a_block_that_is_not_tiff_is_left_alone() {
+        let junk = vec![
+            0xFF, 0xE1, 0x00, 0x0A, b'E', b'x', b'i', b'f', 0, 0, 0xAB, 0xCD,
+        ];
+        assert_eq!(upright_app1(&junk), junk);
+        assert_eq!(upright_app1(&[]), Vec::<u8>::new());
     }
 
     #[test]

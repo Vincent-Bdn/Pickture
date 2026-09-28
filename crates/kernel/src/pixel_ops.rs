@@ -16,7 +16,7 @@
 use image::RgbaImage;
 use rayon::prelude::*;
 
-use crate::model::EffectSpec;
+use crate::model::{CropRect, EffectSpec, Levels};
 
 /// Rows handed to each rayon task. Large enough that scheduling overhead is
 /// irrelevant, small enough that work stays balanced.
@@ -109,7 +109,9 @@ fn histogram_value(img: &RgbaImage) -> [u32; 256] {
         )
 }
 
-fn histogram_channel(img: &RgbaImage, c: usize) -> [u32; 256] {
+/// One channel's own distribution, which is what the per-channel levels
+/// instrument draws and clamps against.
+pub fn histogram_channel(img: &RgbaImage, c: usize) -> [u32; 256] {
     img.as_raw()
         .par_chunks(CHUNK * 4)
         .map(|chunk| {
@@ -215,23 +217,13 @@ pub fn white_balance_value(img: &mut RgbaImage) {
     apply_value_lut(img, &lut);
 }
 
-/// Per-channel white balance: each of R, G and B stretched independently after
-/// discarding outliers. This is the operation that shifts colour casts, and it
-/// is why it is offered separately from the value-only version.
-pub fn white_balance_rgb(img: &mut RgbaImage, discard: f64) {
-    let total = (img.width() as u64) * (img.height() as u64);
-    if total == 0 {
-        return;
-    }
-
-    let luts: Vec<[u8; 256]> = (0..3)
-        .map(|c| {
-            let hist = histogram_channel(img, c);
-            let (low, high) = discard_bounds(&hist, total, discard);
-            stretch_lut(low, high)
-        })
-        .collect();
-
+/// Apply one lookup table to each colour channel, directly.
+///
+/// This is the opposite of `apply_value_lut`: there each channel is scaled by
+/// one shared factor so hue survives, here each is mapped on its own so a cast
+/// can move. Both of the per-channel operations — automatic and manual — go
+/// through here, so they cannot disagree about what per-channel means.
+fn apply_channel_luts(img: &mut RgbaImage, luts: &[[u8; 256]; 3]) {
     img.as_mut().par_chunks_mut(CHUNK * 4).for_each(|chunk| {
         for px in chunk.chunks_exact_mut(4) {
             px[0] = luts[0][px[0] as usize];
@@ -241,11 +233,45 @@ pub fn white_balance_rgb(img: &mut RgbaImage, discard: f64) {
     });
 }
 
+/// Per-channel white balance: each of R, G and B stretched independently after
+/// discarding outliers. This is the operation that shifts colour casts, and it
+/// is why it is offered separately from the value-only version.
+pub fn white_balance_rgb(img: &mut RgbaImage, discard: f64) {
+    let total = (img.width() as u64) * (img.height() as u64);
+    if total == 0 {
+        return;
+    }
+
+    let mut luts = [[0u8; 256]; 3];
+    for (c, lut) in luts.iter_mut().enumerate() {
+        let hist = histogram_channel(img, c);
+        let (low, high) = discard_bounds(&hist, total, discard);
+        *lut = stretch_lut(low, high);
+    }
+
+    apply_channel_luts(img, &luts);
+}
+
 /// Manual levels: black point, white point and gamma, applied to the value
 /// channel. Driven live by the histogram handles.
 pub fn levels_custom(img: &mut RgbaImage, low: u8, high: u8, gamma: f32) {
     let lut = levels_lut(low, high, gamma);
     apply_value_lut(img, &lut);
+}
+
+/// Manual levels applied to each colour channel independently.
+///
+/// The value-channel version deliberately preserves hue: every channel is
+/// scaled by one factor, so a cast survives untouched. This is the opposite
+/// operation, and that is the point of offering it — clamping R, G and B apart
+/// is what moves a cast, and doing it by hand is what `WB · RGB` cannot do.
+pub fn levels_per_channel(img: &mut RgbaImage, rgb: &[Levels; 3]) {
+    let luts = [
+        levels_lut(rgb[0].low, rgb[0].high, rgb[0].gamma),
+        levels_lut(rgb[1].low, rgb[1].high, rgb[1].gamma),
+        levels_lut(rgb[2].low, rgb[2].high, rgb[2].gamma),
+    ];
+    apply_channel_luts(img, &luts);
 }
 
 /// Run whichever colour operation the spec selects. Rotation is applied
@@ -256,7 +282,13 @@ pub fn apply_colour(img: &mut RgbaImage, spec: &EffectSpec) {
         None => {}
         WbValue => white_balance_value(img),
         WbRgb => white_balance_rgb(img, 0.05),
-        Levels => levels_custom(img, spec.low, spec.high, spec.gamma),
+        Levels => {
+            if spec.per_channel {
+                levels_per_channel(img, &spec.rgb)
+            } else {
+                levels_custom(img, spec.low, spec.high, spec.gamma)
+            }
+        }
     }
 }
 
@@ -403,15 +435,38 @@ pub fn apply_rotation(img: &RgbaImage, spec: &EffectSpec) -> RgbaImage {
     crop_to_aspect(&rotated, w, h, spec.angle)
 }
 
-/// Full pipeline: colour then geometry, on an owned buffer.
+// ---------------------------------------------------------------------------
+// Crop
+// ---------------------------------------------------------------------------
+
+/// Cut a normalised rect out of the frame.
+///
+/// The rect is normalised against the frame *after* rotation, which is the frame
+/// the canvas draws the handles on — so the crop the user placed on a 1600 px
+/// proxy is the crop taken here at full resolution.
+pub fn apply_crop(img: RgbaImage, crop: &CropRect) -> RgbaImage {
+    if crop.is_full() {
+        return img;
+    }
+    let (w, h) = (img.width(), img.height());
+    if w == 0 || h == 0 {
+        return img;
+    }
+    let (x, y, cw, ch) = crop.pixels(w, h);
+    image::imageops::crop_imm(&img, x, y, cw, ch).to_image()
+}
+
+/// Full pipeline: colour, then geometry, then the crop, on an owned buffer.
 pub fn apply_all(mut img: RgbaImage, spec: &EffectSpec) -> RgbaImage {
     apply_colour(&mut img, spec);
-    apply_rotation(&img, spec)
+    let img = apply_rotation(&img, spec);
+    apply_crop(img, &spec.crop)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::model::EffectMode;
 
     fn solid(w: u32, h: u32, px: [u8; 4]) -> RgbaImage {
         RgbaImage::from_pixel(w, h, image::Rgba(px))
@@ -469,6 +524,94 @@ mod tests {
         let img = solid(8, 5, [10, 10, 10, 255]);
         let h = histogram_luma(&img);
         assert_eq!(h.iter().sum::<u32>(), 40);
+    }
+
+    #[test]
+    fn per_channel_levels_move_channels_apart() {
+        // The value-channel version preserves hue by scaling every channel by
+        // one factor. This one must not: that is the whole reason it exists.
+        let mut img = solid(4, 4, [100, 100, 100, 255]);
+        let rgb = [
+            Levels {
+                low: 0,
+                high: 200,
+                gamma: 1.0,
+            },
+            Levels::default(),
+            Levels::default(),
+        ];
+        levels_per_channel(&mut img, &rgb);
+        let p = img.get_pixel(0, 0).0;
+        assert_eq!(p[0], 128, "red should stretch");
+        assert_eq!(p[1], 100, "green should be untouched");
+        assert_eq!(p[2], 100, "blue should be untouched");
+        assert_eq!(p[3], 255);
+    }
+
+    #[test]
+    fn a_default_spec_leaves_every_channel_alone() {
+        let mut img = solid(3, 3, [10, 120, 250, 255]);
+        let spec = EffectSpec {
+            mode: EffectMode::Levels,
+            per_channel: true,
+            ..Default::default()
+        };
+        apply_colour(&mut img, &spec);
+        assert_eq!(img.get_pixel(0, 0).0, [10, 120, 250, 255]);
+    }
+
+    #[test]
+    fn crop_takes_the_rect_it_was_given() {
+        let mut img = RgbaImage::new(100, 50);
+        // Mark the pixel at the centre of the right half.
+        img.put_pixel(75, 25, image::Rgba([1, 2, 3, 255]));
+
+        let crop = CropRect {
+            x: 0.5,
+            y: 0.0,
+            w: 0.5,
+            h: 1.0,
+        };
+        let out = apply_crop(img.clone(), &crop);
+        assert_eq!(out.dimensions(), (50, 50));
+        assert_eq!(out.get_pixel(25, 25).0, [1, 2, 3, 255]);
+
+        // A full crop is not a copy of a sub-rect, it is the frame itself.
+        let same = apply_crop(img.clone(), &CropRect::FULL);
+        assert_eq!(same.dimensions(), (100, 50));
+    }
+
+    #[test]
+    fn the_pipeline_crops_after_it_rotates() {
+        // Quarter turns swap the axes, and the crop is normalised against what
+        // rotation leaves — so a half-height crop of a turned 100x50 frame is
+        // 50 wide and 50 tall, not 25.
+        let img = solid(100, 50, [9, 9, 9, 255]);
+        let spec = EffectSpec {
+            quarter_turns: 1,
+            crop: CropRect {
+                x: 0.0,
+                y: 0.0,
+                w: 1.0,
+                h: 0.5,
+            },
+            ..Default::default()
+        };
+        let out = apply_all(img, &spec);
+        assert_eq!(out.dimensions(), (50, 50));
+    }
+
+    #[test]
+    fn a_cropped_spec_is_not_the_identity() {
+        let mut spec = EffectSpec::default();
+        assert!(spec.is_identity());
+        spec.crop = CropRect {
+            x: 0.1,
+            y: 0.1,
+            w: 0.8,
+            h: 0.8,
+        };
+        assert!(!spec.is_identity(), "a crop changes the written frame");
     }
 
     #[test]

@@ -24,11 +24,12 @@ force you to open Lightroom at all.
 | `Del` / `⌫` | pass, advance |
 | `E` | same as `↵` |
 | `Z` | hold to inspect at 1:1 |
-| `[` `]` | rotate ±90° |
+| `[` `]` | turn the copy ±90° (the source view never turns) |
 | `O` / `⇧O` | switch working folder / OS folder picker |
 | `S` / `⇧S` | destination menu / choose destination folder |
 | `/` | reveal the full shortcut list in the status bar |
-| `esc` `↵` | cancel / confirm on the enhance page |
+| `esc` `←` | cancel on the enhance page — `←` is under the hand already on `↵` |
+| `↵` | confirm on the enhance page |
 
 The core keys are permanently visible in the status bar, so no shortcut lives
 only in this file.
@@ -69,17 +70,34 @@ Files are named with the effect applied: `_ORIG`, `_WBV`, `_WBRGB`, `_CUSTOM`.
 
 ## Effects
 
-Four operations, applied to a downscaled proxy for the live preview and at full
-resolution only on confirm.
+Applied to a downscaled proxy for the live preview, and at full resolution only
+on confirm.
 
 - **WB · V** — white balance on the value channel. Adjusts brightness, preserves
   hue and saturation.
-- **WB · RGB** — each channel stretched independently. This is the one that
-  removes a colour cast.
+- **WB · RGB** — each channel stretched independently, automatically. This is the
+  one that removes a colour cast.
 - **Levels** — manual black point, white point and gamma, dragged directly on the
   histogram. There is no Apply button.
+- **Levels, per channel** — the `LUMA · R · G · B` selector above the histogram.
+  `LUMA` is the default and behaves exactly as before: one curve on the value
+  channel, hue preserved. Picking `R`, `G` or `B` points the same three handles
+  at that channel's own distribution, so each clamps on its own — which is how a
+  cast is corrected by hand rather than left to the automatic pass. The four sets
+  of handles are kept separately, so switching between them discards nothing.
 - **Rotation** — 90° steps (lossless) plus a fine angle to ±10°, cropped back to
   the original aspect ratio.
+- **Crop** — `Orig` keeps the shape the camera recorded and is the default; then
+  1:1, 5:4, 4:3, 3:2, 16:9, and `Custom` last for a free crop. `Turn` stands a
+  ratio on its side. The shape is chosen in the panel; where the crop sits is a
+  drag on the frame itself — corners and edges resize, the middle moves it, and
+  under a ratio both axes always move together.
+
+**No operation touches the frame you are culling.** While you browse, the canvas
+is a view of the file on disk: no turn, no angle, no crop is drawn on it, however
+many are pending. They are listed beside the filename instead, and applied to the
+copy written into the destination. The enhance page is where the result itself is
+shown, because that is where it is being decided.
 
 Supported formats: JPEG, PNG, BMP, GIF, TIFF, WebP. Raw is not supported yet.
 
@@ -134,8 +152,8 @@ crates/
 ├── kernel/          decode, pixel ops, caches, job pool, sessions — no UI at all
 ├── ui_kit/          design tokens, painting primitives, the mark, texture store
 ├── slice_browse/    folder picker, filmstrip, folder switcher
-├── slice_view/      the image canvas
-├── slice_enhance/   confirm modal, histogram, rotation
+├── slice_view/      the image canvas and the crop editor
+├── slice_enhance/   confirm modal, histogram, rotation, crop ratios
 ├── slice_select/    destination menu and the write path
 └── app/             composition root — routes events between slices
 ```

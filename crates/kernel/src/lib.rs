@@ -13,6 +13,14 @@
 //! Cargo makes that structural rather than a convention: a slice physically
 //! cannot reach another slice, because it is not in its manifest.
 
+// Two lints here want APIs newer than the MSRV this workspace promises
+// (`rust-version = "1.82"`): `slice::as_chunks` landed in 1.88 and
+// `usize::is_multiple_of` in 1.87. Taking either suggestion would make the
+// crate refuse to build on the toolchain the manifest advertises, so both are
+// declined — and since CI runs clippy with `-D warnings`, declining them has to
+// be said out loud rather than left as noise in the log.
+#![allow(clippy::chunks_exact_to_as_chunks, clippy::manual_is_multiple_of)]
+
 pub mod cache;
 pub mod image_io;
 pub mod jobs;
@@ -21,9 +29,9 @@ pub mod pixel_ops;
 pub mod session;
 
 pub use model::{
-    frame_id, is_supported, supported_label, today_stamp, Destination, EffectMode, EffectSpec,
-    ExifSummary, Frame, FrameId, Judgement, ANGLE_LIMIT, GAMMA_MAX, GAMMA_MIN, LEVELS_MIN_SPAN,
-    SUPPORTED_EXTENSIONS,
+    frame_id, is_supported, supported_label, today_stamp, CropRatio, CropRect, Destination,
+    EffectMode, EffectSpec, ExifSummary, Frame, FrameId, Judgement, Levels, LevelsChannel,
+    ANGLE_LIMIT, GAMMA_MAX, GAMMA_MIN, LEVELS_MIN_SPAN, SUPPORTED_EXTENSIONS,
 };
 pub use session::{scan_folder, PersistedSession, Session, SessionStore};
 

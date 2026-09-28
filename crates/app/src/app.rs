@@ -10,8 +10,8 @@ use pickture_kernel::jobs::{
     worker_split, DecodeKind, DecodeOutcome, DecodeRequest, ImageLoader, ScanLoader, ScanOutcome,
 };
 use pickture_kernel::{
-    paths, pixel_ops, session::Session, supported_label, Destination, EffectSpec, Judgement,
-    SessionStore,
+    paths, pixel_ops, session::Session, supported_label, CropRect, Destination, EffectSpec,
+    Judgement, LevelsChannel, SessionStore,
 };
 use pickture_slice_browse::{
     filmstrip::AckState, folder_switcher_popover, picker, switcher_anchor, BrowseEvent, BrowseState,
@@ -20,7 +20,7 @@ use pickture_slice_enhance::{control_panel, modal_header, EnhanceEvent, EnhanceS
 use pickture_slice_select::{
     destination_popover, validate, SelectEvent, SelectState, WriteJob, WriteProgress, Writer,
 };
-use pickture_slice_view::{canvas, CanvasContent, Geometry};
+use pickture_slice_view::{canvas, crop_overlay, CanvasContent, Geometry};
 use pickture_ui_kit::tokens::{metric, Mode, Theme};
 use pickture_ui_kit::{paint, TextureStore};
 use std::path::PathBuf;
@@ -68,18 +68,26 @@ pub struct PicktureApp {
     /// `(frames probed, total)` while a folder is being scanned.
     scanning: Option<(usize, usize)>,
     pending_folder: Option<PathBuf>,
+    /// An OS dialog to open at the top of the next frame. Never opened from
+    /// inside one — see `Dialog`.
+    pending_dialog: Option<Dialog>,
 
     /// Keep acknowledgement: which cell, and when it started.
     ack: Option<(usize, f64)>,
 
-    /// The unprocessed proxy the enhance modal works from, plus its histogram.
+    /// The unprocessed proxy the enhance modal works from, plus its histograms.
     proxy_base: Option<RgbaImage>,
     proxy_for: Option<PathBuf>,
     /// A processed proxy waiting to be uploaded at the top of the next frame.
     /// Uploads never happen inside a draw call.
     pending_proxy: Option<RgbaImage>,
-    histogram: Histogram,
+    /// Luminance first, then R, G and B — indexed by `LevelsChannel`.
+    histograms: [Histogram; 4],
     working_spec: EffectSpec,
+    /// Aspect of the frame the crop is normalised against, as the modal last
+    /// drew it. The panel decides what *shape* a crop is; only the view knows
+    /// the shape of the frame it has to fit, so the two meet here.
+    crop_frame_aspect: f32,
 
     /// Session state has changed since the last write to disk.
     dirty: bool,
@@ -134,12 +142,14 @@ impl PicktureApp {
             enhance: EnhanceState::default(),
             scanning: None,
             pending_folder: None,
+            pending_dialog: None,
             ack: None,
             proxy_base: None,
             proxy_for: None,
             pending_proxy: None,
-            histogram: Histogram::default(),
+            histograms: Default::default(),
             working_spec: EffectSpec::default(),
+            crop_frame_aspect: 1.0,
             dirty: false,
             last_saved: 0.0,
             notice: None,
@@ -198,13 +208,17 @@ impl PicktureApp {
         }
     }
 
-    fn browse_for_folder(&mut self) {
+    fn browse_for_folder(&mut self, frame: &eframe::Frame) {
         let start = self
             .session
             .as_ref()
             .map(|s| s.folder.clone())
             .or_else(|| self.store.recent.first().cloned());
-        let mut dialog = rfd::FileDialog::new().set_title("Choose a folder of frames");
+        let mut dialog = rfd::FileDialog::new()
+            .set_title("Choose a folder of frames")
+            // Owned by our window, so Windows puts it in front of us and not
+            // behind. See `Dialog`.
+            .set_parent(frame);
         if let Some(dir) = start {
             dialog = dialog.set_directory(dir);
         }
@@ -213,10 +227,12 @@ impl PicktureApp {
         }
     }
 
-    fn browse_for_destination(&mut self) {
+    fn browse_for_destination(&mut self, frame: &eframe::Frame) {
         let Some(session) = &self.session else { return };
-        let mut dialog = rfd::FileDialog::new().set_title("Where should keepers go?");
-        dialog = dialog.set_directory(&session.folder);
+        let dialog = rfd::FileDialog::new()
+            .set_title("Where should keepers go?")
+            .set_parent(frame)
+            .set_directory(&session.folder);
         if let Some(picked) = dialog.pick_folder() {
             self.set_destination(Destination::Absolute(picked));
         }
@@ -318,6 +334,21 @@ impl PicktureApp {
         self.working_spec = session.effect_of(&frame.id);
         self.enhance.open = true;
         self.enhance.write_progress = None;
+        // Reopen on the channel this frame was last worked on, so returning to a
+        // frame does not silently point the handles at a different curve.
+        let spec = self.working_spec;
+        self.enhance.channel = if spec.per_channel {
+            [
+                LevelsChannel::Red,
+                LevelsChannel::Green,
+                LevelsChannel::Blue,
+            ]
+            .into_iter()
+            .find(|c| !spec.levels_of(*c).is_identity())
+            .unwrap_or(LevelsChannel::Red)
+        } else {
+            LevelsChannel::Luma
+        };
 
         // Decode the proxy synchronously only if it is not already the right
         // frame; at 1600 px this is tens of milliseconds and happens once per
@@ -325,7 +356,7 @@ impl PicktureApp {
         if self.proxy_for.as_deref() != Some(frame.path.as_path()) {
             match pickture_kernel::image_io::decode_preview(&frame.path, PROXY_DIM) {
                 Ok(img) => {
-                    self.histogram = Histogram::from_bins(&pixel_ops::histogram_luma(&img));
+                    self.histograms = histograms_of(&img);
                     self.proxy_base = Some(img);
                     self.proxy_for = Some(frame.path.clone());
                 }
@@ -370,10 +401,13 @@ impl PicktureApp {
         // ---- scan --------------------------------------------------------
         for outcome in self.scanner.poll() {
             match outcome {
-                ScanOutcome::Progress { folder, found } => {
+                ScanOutcome::Progress {
+                    folder,
+                    probed,
+                    total,
+                } => {
                     if self.pending_folder.as_deref() == Some(folder.as_path()) {
-                        let total = self.scanning.map(|(_, t)| t).unwrap_or(0).max(found);
-                        self.scanning = Some((found, total.max(found + 1)));
+                        self.scanning = Some((probed, total));
                     }
                 }
                 ScanOutcome::Done { folder, frames } => {
@@ -381,15 +415,9 @@ impl PicktureApp {
                         continue;
                     }
                     let persisted = self.store.get(&folder);
-                    let mut session = Session::open(folder.clone(), persisted);
-                    // `Session::open` rescans; replace its frames with the ones
-                    // that already carry probed dimensions.
-                    let cursor_id = session.current().map(|f| f.id.clone());
-                    session.frames = frames;
-                    session.cursor = cursor_id
-                        .and_then(|id| session.frames.iter().position(|f| f.id == id))
-                        .unwrap_or(0);
-                    session.rescan_destination();
+                    // Built from the frames the worker just listed and probed,
+                    // rather than listing the folder again here.
+                    let session = Session::with_frames(folder.clone(), persisted, frames);
 
                     self.session = Some(session);
                     self.scanning = None;
@@ -549,9 +577,20 @@ impl PicktureApp {
         }
 
         if self.enhance.open {
-            let (escape, enter) =
-                ctx.input(|i| (i.key_pressed(Key::Escape), i.key_pressed(Key::Enter)));
-            if escape {
+            let (escape, enter, left) = ctx.input(|i| {
+                (
+                    i.key_pressed(Key::Escape),
+                    i.key_pressed(Key::Enter),
+                    i.key_pressed(Key::ArrowLeft),
+                )
+            });
+            // `←` cancels as well as `esc`. It is the key under the hand that is
+            // already resting on `↵`, so leaving the page costs no reach — while
+            // a readout is being typed into, or a handle is under the pointer, it
+            // belongs to that instead.
+            let cancel =
+                escape || (left && self.enhance.editing.is_none() && self.enhance.drag.is_none());
+            if cancel {
                 self.enhance.close();
             } else if enter && self.enhance.editing.is_none() {
                 self.confirm_enhance();
@@ -617,14 +656,14 @@ impl PicktureApp {
         }
         if o {
             if shift {
-                self.browse_for_folder();
+                self.pending_dialog = Some(Dialog::WorkingFolder);
             } else {
                 self.browse.open_switcher();
             }
         }
         if s {
             if shift {
-                self.browse_for_destination();
+                self.pending_dialog = Some(Dialog::Destination);
             } else {
                 self.select.open();
             }
@@ -647,6 +686,10 @@ impl PicktureApp {
             };
             let mut spec = session.effect_of(&frame.id);
             spec.quarter_turns += delta;
+            // The axes swap, so the frame the crop is normalised against is a
+            // different shape: carry the crop round with the picture rather than
+            // letting it land on a different part of it.
+            spec.crop = spec.crop.turned(delta);
             session.set_effect(frame.id, spec);
         }
         self.dirty = true;
@@ -731,7 +774,15 @@ impl eframe::App for PicktureApp {
         self.persist_active();
     }
 
-    fn update(&mut self, ctx: &Context, _frame: &mut eframe::Frame) {
+    fn update(&mut self, ctx: &Context, frame: &mut eframe::Frame) {
+        // Before anything is drawn, and never from inside the drawing pass.
+        if let Some(dialog) = self.pending_dialog.take() {
+            match dialog {
+                Dialog::WorkingFolder => self.browse_for_folder(frame),
+                Dialog::Destination => self.browse_for_destination(frame),
+            }
+        }
+
         self.drain_workers(ctx);
         self.flush_proxy(ctx);
         self.handle_dropped_folders(ctx);
@@ -793,9 +844,19 @@ impl eframe::App for PicktureApp {
         }
 
         // Repaint only while something is actually moving.
+        //
+        // `previews.pending()` belongs in this list as much as the thumbnails
+        // do: a decode that lands after the last repaint sits in its channel
+        // unread, because the only thing that drains it is a frame. Without it,
+        // opening a folder and then touching nothing left the canvas reading
+        // `decoding` indefinitely — the frame was decoded and waiting, and the
+        // window was asleep. Any input at all woke it and the picture appeared,
+        // which is what made it look intermittent.
         if self.ack.is_some()
             || self.scanning.is_some()
             || self.thumbs.pending() > 0
+            || self.previews.pending() > 0
+            || self.pending_proxy.is_some()
             || self.enhance.write_progress.is_some()
         {
             ctx.request_repaint_after(std::time::Duration::from_millis(16));
@@ -814,7 +875,7 @@ impl PicktureApp {
             BrowseEvent::OpenFolder(path) => self.open_folder(path),
             BrowseEvent::BrowseForFolder => {
                 self.browse.switcher_open = false;
-                self.browse_for_folder();
+                self.pending_dialog = Some(Dialog::WorkingFolder);
             }
             BrowseEvent::SelectFrame(index) => {
                 if let Some(session) = &mut self.session {
@@ -839,7 +900,7 @@ impl PicktureApp {
             SelectEvent::SetDestination(d) => self.set_destination(d),
             SelectEvent::BrowseForDestination => {
                 self.select.menu_open = false;
-                self.browse_for_destination();
+                self.pending_dialog = Some(Dialog::Destination);
             }
             SelectEvent::ToggleMenu => {
                 if self.select.menu_open {
@@ -856,28 +917,53 @@ impl PicktureApp {
     fn picker_screen(&mut self, ui: &mut egui::Ui, theme: &Theme, body: egui::Rect) {
         let (status, content) = paint::split_bottom(body, metric::STATUS_BAR);
 
+        // While a folder is being read the picker takes no further input: a
+        // second folder would cancel the first, and a click that looks ignored
+        // is what made this screen feel broken.
+        let scan = self.pending_folder.as_deref().map(|folder| {
+            let (probed, total) = self.scanning.unwrap_or((0, 0));
+            picker::Scan {
+                folder,
+                probed,
+                total,
+            }
+        });
+        let busy = scan.is_some();
+
         if let Some(event) =
-            picker::folder_picker(ui, theme, content, &self.store, &mut self.browse)
+            picker::folder_picker(ui, theme, content, &self.store, &mut self.browse, scan)
         {
             self.route_browse(event);
         }
-        if let Some(event) = picker::picker_keys(ui, &self.store, &mut self.browse) {
-            self.route_browse(event);
+        if !busy {
+            if let Some(event) = picker::picker_keys(ui, &self.store, &mut self.browse) {
+                self.route_browse(event);
+            }
         }
 
         // The picker's own status line.
         paint::fill(ui.painter(), status, theme.chrome);
         paint::rule_top(ui.painter(), status, theme.hair);
         let font = pickture_ui_kit::tokens::mono(pickture_ui_kit::size::MONO_S);
+        let scanning_line = self.scanning.map(|(probed, total)| {
+            if total == 0 {
+                "reading the folder".to_string()
+            } else {
+                format!("reading {probed} of {total} frames")
+            }
+        });
+        let line = self
+            .notice
+            .as_ref()
+            .map(|(m, _)| m.as_str())
+            .or(scanning_line.as_deref())
+            .unwrap_or("ready");
         paint::text_left(
             ui.painter(),
             Pos2::new(status.left() + 18.0, status.center().y),
-            self.notice
-                .as_ref()
-                .map(|(m, _)| m.as_str())
-                .unwrap_or("ready"),
+            line,
             font.clone(),
-            if self.notice.is_some() {
+            if self.notice.is_some() || scanning_line.is_some() {
                 theme.sodium
             } else {
                 theme.fg_muted
@@ -924,16 +1010,26 @@ impl PicktureApp {
         }
 
         // ---- info bar ------------------------------------------------------
-        let (name, exif, already, destination) = {
+        // `pending` is what the copy will be written with. The canvas shows the
+        // file as it is, so this is the only place a turn or a crop is visible
+        // before the frame reaches the destination.
+        let (name, exif, already, pending, destination) = {
             let session = self.session.as_ref().unwrap();
             match session.current() {
                 Some(frame) => (
                     frame.id.clone(),
                     frame.exif.clone(),
                     session.is_in_destination(&frame.id),
+                    pending_edits(&session.effect_of(&frame.id)),
                     session.destination.clone(),
                 ),
-                None => (String::new(), None, false, session.destination.clone()),
+                None => (
+                    String::new(),
+                    None,
+                    false,
+                    None,
+                    session.destination.clone(),
+                ),
             }
         };
 
@@ -945,6 +1041,7 @@ impl PicktureApp {
                 filename: &name,
                 exif: exif.as_ref(),
                 already_kept: already,
+                pending: pending.as_deref(),
                 destination: &destination,
                 destination_open: self.select.menu_open,
             },
@@ -958,21 +1055,12 @@ impl PicktureApp {
         }
 
         // ---- canvas --------------------------------------------------------
-        // The canvas shows the frame as it will be written, so the geometry the
-        // write path applies is the geometry the canvas draws.
-        let geom = {
-            let session = self.session.as_ref().unwrap();
-            session
-                .current()
-                .map(|f| {
-                    let spec = session.effect_of(&f.id);
-                    Geometry {
-                        quarter_turns: spec.quarter_turns,
-                        angle: spec.angle,
-                    }
-                })
-                .unwrap_or_default()
-        };
+        // No geometry. While you are culling, the canvas is a view of the file
+        // on disk and nothing else: turns, angles and crops belong to the copy
+        // written into the destination, and showing them here made the tool look
+        // like it had altered an original it never touches. The enhance page is
+        // where the result is shown, because that is where it is decided.
+        let geom = Geometry::default();
 
         let content = {
             let session = self.session.as_ref().unwrap();
@@ -1058,6 +1146,9 @@ impl PicktureApp {
     fn enhance_modal(&mut self, ctx: &Context, theme: &Theme) {
         let screen = ctx.screen_rect();
         let mut event = None;
+        // A crop drag and a panel event can land in the same frame, so the two
+        // are collected separately rather than one overwriting the other.
+        let mut crop_change = None;
 
         egui::Area::new(egui::Id::new("enhance-modal"))
             .order(egui::Order::Middle)
@@ -1084,25 +1175,42 @@ impl PicktureApp {
                         texture: t,
                         // Quarter turns are already baked into the proxy pixels;
                         // only the fine angle and its crop are applied at draw
-                        // time, so dragging costs no pixel work.
+                        // time, so dragging costs no pixel work. The user's own
+                        // crop is deliberately *not* applied here — it is drawn
+                        // as an overlay, because a crop you cannot see outside of
+                        // cannot be placed.
                         geometry: Geometry {
                             quarter_turns: 0,
                             angle: self.working_spec.angle,
+                            crop: CropRect::FULL,
                         },
                     },
                     None => CanvasContent::Decoding,
                 };
-                canvas(
+                let frame = canvas(
                     &mut ui,
                     theme,
                     canvas_rect,
                     content,
                     metric::MODAL_CANVAS_PAD,
                     0.0,
-                    true,
+                    // The thirds belong to the crop, and the overlay draws them
+                    // there.
+                    false,
                 );
 
-                let hist = self.histogram.clone();
+                if let Some(frame) = frame {
+                    let aspect = (frame.width() / frame.height().max(0.001)).max(0.001);
+                    self.crop_frame_aspect = aspect;
+                    let lock = self.working_spec.crop_aspect(aspect);
+                    if let Some(next) =
+                        crop_overlay(&mut ui, theme, frame, self.working_spec.crop, lock)
+                    {
+                        crop_change = Some(next);
+                    }
+                }
+
+                let hist = self.histograms[histogram_index(self.enhance.channel)].clone();
                 if let Some(e) = control_panel(
                     &mut ui,
                     theme,
@@ -1115,11 +1223,23 @@ impl PicktureApp {
                 }
             });
 
+        if let Some(crop) = crop_change {
+            // Placing the crop costs no pixel work: the proxy is drawn whole and
+            // the rectangle is an overlay on it.
+            self.working_spec.crop = crop;
+        }
+
         match event {
             Some(EnhanceEvent::SpecChanged(spec)) => {
                 if spec != self.working_spec {
-                    self.working_spec = spec;
-                    self.rebuild_proxy();
+                    // Both questions are asked while `working_spec` still holds
+                    // the previous value, because both are about the difference.
+                    let settled = self.settle_spec(spec);
+                    let rebuild = self.needs_new_proxy(&settled);
+                    self.working_spec = settled;
+                    if rebuild {
+                        self.rebuild_proxy();
+                    }
                 }
             }
             Some(EnhanceEvent::Cancel) => self.enhance.close(),
@@ -1127,6 +1247,118 @@ impl PicktureApp {
             None => {}
         }
     }
+
+    /// Fold a spec the panel just handed back into a legal one.
+    ///
+    /// The panel decides what shape a crop is and the view knows what shape the
+    /// frame is; neither can derive the rectangle alone, so it is derived here —
+    /// the one place that has both.
+    fn settle_spec(&self, mut spec: EffectSpec) -> EffectSpec {
+        let quarters = spec.quarter_turns - self.working_spec.quarter_turns;
+        if quarters != 0 {
+            spec.crop = spec.crop.turned(quarters);
+        }
+
+        let reshaped = spec.crop_ratio != self.working_spec.crop_ratio
+            || spec.crop_swap != self.working_spec.crop_swap;
+        if reshaped {
+            // A quarter turn in the same frame swaps the axes of the frame the
+            // ratio has to fit.
+            let aspect = if quarters.rem_euclid(2) == 1 {
+                1.0 / self.crop_frame_aspect
+            } else {
+                self.crop_frame_aspect
+            };
+            if let Some(target) = spec.crop_aspect(aspect) {
+                spec.crop = if self.working_spec.crop.is_full() {
+                    // Asking for a shape from an uncropped frame means the
+                    // largest crop of that shape — anything smaller would be an
+                    // arbitrary choice made on the user's behalf.
+                    CropRect::centred(aspect, target)
+                } else {
+                    spec.crop.conform(aspect, target)
+                };
+            }
+        }
+        spec
+    }
+
+    /// Whether a change actually needs the colour pass run again. The crop, the
+    /// ratio and the fine angle are all draw-time, so they must not pay for one.
+    fn needs_new_proxy(&self, spec: &EffectSpec) -> bool {
+        let previous = self.working_spec;
+        spec.mode != previous.mode
+            || spec.per_channel != previous.per_channel
+            || spec.rgb != previous.rgb
+            || (spec.low, spec.high, spec.gamma) != (previous.low, previous.high, previous.gamma)
+            || spec.quarter_turns != previous.quarter_turns
+    }
+}
+
+/// The geometry a frame is carrying, for the info bar.
+///
+/// The culling canvas deliberately does not draw any of it, so this is the only
+/// place a pending turn or crop is visible before the copy is written.
+fn pending_edits(spec: &EffectSpec) -> Option<String> {
+    let mut parts: Vec<String> = Vec::new();
+    match spec.quarter_turns.rem_euclid(4) {
+        1 => parts.push("turned 90°".into()),
+        2 => parts.push("turned 180°".into()),
+        3 => parts.push("turned -90°".into()),
+        _ => {}
+    }
+    if spec.angle != 0.0 {
+        parts.push(format!(
+            "{}{:.1}°",
+            if spec.angle > 0.0 { "+" } else { "" },
+            spec.angle
+        ));
+    }
+    if !spec.crop.is_full() {
+        parts.push(format!(
+            "cropped to {}%",
+            (spec.crop.area_fraction() * 100.0).round() as i32
+        ));
+    }
+    if parts.is_empty() {
+        None
+    } else {
+        Some(parts.join(" · "))
+    }
+}
+
+/// An OS dialog waiting to be opened.
+///
+/// `rfd::FileDialog::pick_folder` blocks the thread it is called on for as long
+/// as the dialog is up. Called from inside the drawing pass, as this used to be,
+/// that stops egui mid-frame: the window cannot repaint, the pointer release
+/// that asked for the dialog is never processed, and the frame that eventually
+/// resumes carries input from another era. With the dialog also unowned, Windows
+/// was free to place it behind our own window — so the button appeared to do
+/// nothing, and took four or five clicks to work. Both halves are fixed: the
+/// dialog is opened between frames, and it is owned by our window.
+enum Dialog {
+    WorkingFolder,
+    Destination,
+}
+
+/// Luminance plus the three channels, in `LevelsChannel` order.
+///
+/// All four come off the unprocessed proxy in one go, on the modal open. The
+/// alternative — recomputing the selected one when the channel changes — would
+/// put a full histogram pass behind a segment click for no gain: the bins are a
+/// property of the frame, not of the handles.
+fn histograms_of(img: &RgbaImage) -> [Histogram; 4] {
+    [
+        Histogram::from_bins(&pixel_ops::histogram_luma(img)),
+        Histogram::from_bins(&pixel_ops::histogram_channel(img, 0)),
+        Histogram::from_bins(&pixel_ops::histogram_channel(img, 1)),
+        Histogram::from_bins(&pixel_ops::histogram_channel(img, 2)),
+    ]
+}
+
+fn histogram_index(channel: LevelsChannel) -> usize {
+    channel.index().map(|i| i + 1).unwrap_or(0)
 }
 
 static SUPPORTED: std::sync::LazyLock<String> = std::sync::LazyLock::new(supported_label);

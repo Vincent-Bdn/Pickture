@@ -129,6 +129,9 @@ pub struct InfoBar<'a> {
     pub filename: &'a str,
     pub exif: Option<&'a ExifSummary>,
     pub already_kept: bool,
+    /// Geometry this frame will be written with. The culling canvas shows the
+    /// file as it is, so this is the only sign of it until the copy lands.
+    pub pending: Option<&'a str>,
     pub destination: &'a Destination,
     pub destination_open: bool,
 }
@@ -207,6 +210,22 @@ pub fn info_bar(ui: &mut Ui, theme: &Theme, rect: Rect, info: InfoBar<'_>) -> Op
                 &shown,
                 font,
                 theme.fg_muted,
+            )
+            .width()
+                + 14.0;
+        }
+    }
+
+    if let Some(pending) = info.pending {
+        if x < left_limit {
+            let font = tokens::mono(size::MONO_S);
+            let shown = paint::elide(ui.painter(), pending, &font, (left_limit - x).max(0.0));
+            x += paint::text_left(
+                ui.painter(),
+                Pos2::new(x, rect.center().y),
+                &shown,
+                font,
+                theme.fg_secondary,
             )
             .width()
                 + 14.0;

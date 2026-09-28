@@ -131,6 +131,16 @@ pub struct Session {
 impl Session {
     pub fn open(folder: PathBuf, persisted: PersistedSession) -> Self {
         let frames = scan_folder(&folder);
+        Self::with_frames(folder, persisted, frames)
+    }
+
+    /// Open with frames that have already been listed and probed.
+    ///
+    /// This is the path the app actually takes: the scan worker has just
+    /// listed the folder and read every header, so listing it a second time on
+    /// the UI thread — which is what `open` would do — is a directory walk the
+    /// window is frozen for and whose result is thrown away.
+    pub fn with_frames(folder: PathBuf, persisted: PersistedSession, frames: Vec<Frame>) -> Self {
         let cursor = persisted
             .cursor_id
             .as_ref()

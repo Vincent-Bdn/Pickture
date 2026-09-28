@@ -18,10 +18,11 @@
 //! multi-hundred-millisecond freeze on every arrow-key press.
 
 use image::RgbaImage;
+use rayon::prelude::*;
 use std::cmp::Ordering;
 use std::collections::{BinaryHeap, HashSet};
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering as AtomicOrdering};
+use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering as AtomicOrdering};
 use std::sync::mpsc::{channel, Receiver, Sender};
 use std::sync::{Arc, Condvar, Mutex};
 use std::thread::JoinHandle;
@@ -356,9 +357,13 @@ struct ScanRequest {
 }
 
 pub enum ScanOutcome {
+    /// Sent once before any probing, then as the probe advances. `total` is
+    /// known from the moment the folder has been listed, so the wait can be
+    /// stated as a fraction rather than as a spinner.
     Progress {
         folder: PathBuf,
-        found: usize,
+        probed: usize,
+        total: usize,
     },
     Done {
         folder: PathBuf,
@@ -380,34 +385,58 @@ impl ScanLoader {
                     while let Ok(newer) = rx_req.try_recv() {
                         job = newer;
                     }
-                    if job.generation != gen_worker.load(AtomicOrdering::SeqCst) {
+                    let current = || job.generation == gen_worker.load(AtomicOrdering::SeqCst);
+                    if !current() {
                         continue;
                     }
 
                     let mut frames = crate::session::scan_folder(&job.folder);
                     let total = frames.len();
 
-                    for (i, frame) in frames.iter_mut().enumerate() {
-                        if job.generation != gen_worker.load(AtomicOrdering::SeqCst) {
-                            break;
-                        }
-                        frame.dimensions = image_io::read_dimensions(&frame.path);
-                        // Report often enough for the bar to move, rarely
-                        // enough that a 1,200-frame folder does not flood the
-                        // channel with 1,200 messages.
-                        if i % 16 == 0
-                            && tx_out
-                                .send(ScanOutcome::Progress {
-                                    folder: job.folder.clone(),
-                                    found: i.min(total),
-                                })
-                                .is_err()
-                        {
-                            return;
-                        }
+                    // Said before a single header has been read, so the wait is
+                    // visible from the first moment there is something to say.
+                    // Until this landed, a folder took as long as it took with
+                    // nothing on screen at all, and the only reading available
+                    // was that the click had not worked.
+                    if tx_out
+                        .send(ScanOutcome::Progress {
+                            folder: job.folder.clone(),
+                            probed: 0,
+                            total,
+                        })
+                        .is_err()
+                    {
+                        return;
                     }
 
-                    if job.generation != gen_worker.load(AtomicOrdering::SeqCst) {
+                    // One file open per frame, so it goes across the pool: on a
+                    // 1,200-frame card this is the difference between a second
+                    // and most of a minute, and the gallery cannot open until it
+                    // is finished — the design requires every cell to be laid
+                    // out at its final height before its image exists.
+                    let probed = AtomicUsize::new(0);
+                    let progress = Mutex::new(tx_out.clone());
+                    let folder = job.folder.clone();
+                    frames.par_iter_mut().for_each(|frame| {
+                        if !current() {
+                            return;
+                        }
+                        frame.dimensions = image_io::read_dimensions(&frame.path);
+                        let n = probed.fetch_add(1, AtomicOrdering::Relaxed) + 1;
+                        // Often enough for the count to move, rarely enough that
+                        // a 1,200-frame folder does not post 1,200 messages.
+                        if n % 16 == 0 || n == total {
+                            if let Ok(tx) = progress.lock() {
+                                let _ = tx.send(ScanOutcome::Progress {
+                                    folder: folder.clone(),
+                                    probed: n,
+                                    total,
+                                });
+                            }
+                        }
+                    });
+
+                    if !current() {
                         continue;
                     }
                     if tx_out
@@ -432,11 +461,13 @@ impl ScanLoader {
     }
 
     pub fn request(&self, folder: PathBuf) {
-        self.generation.fetch_add(1, AtomicOrdering::SeqCst);
-        let _ = self.tx.send(ScanRequest {
-            folder,
-            generation: self.generation.load(AtomicOrdering::SeqCst),
-        });
+        // `fetch_add` hands back the previous value, and that value plus one is
+        // this request's own generation. Reading the counter again instead would
+        // pick up a generation belonging to a later request, and two requests
+        // racing here would both claim to be current — so neither would be
+        // cancelled, and one of them would deliver its frames over the other.
+        let generation = self.generation.fetch_add(1, AtomicOrdering::SeqCst) + 1;
+        let _ = self.tx.send(ScanRequest { folder, generation });
     }
 
     pub fn poll(&self) -> Vec<ScanOutcome> {
